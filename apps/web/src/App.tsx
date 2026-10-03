@@ -1,10 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { trackDiagnostics } from "../../../packages/analysis/src/diagnostic-tracking";
+import type {
+  AnalysisResult,
+  AnalysisSettings,
+  Diagnostic,
+  PluginDescriptor,
+} from "../../../packages/analysis/src/types";
+import {
+  resetAnalysisSettings,
+  safelyLoadAnalysisSettings,
+  saveAnalysisSettings,
+} from "./analysis-settings";
+import { BodyEditor } from "./BodyEditor";
 import { Confirmation } from "./Confirmation";
 import { Icon } from "./Icon";
+import { ProofreadingPanel } from "./ProofreadingPanel";
 import type { EditorHost, TextDocument } from "./ports";
 import { TextActions } from "./TextActions";
 
 type Notice = { text: string; error: boolean };
+type DiagnosticDisplay = {
+  documentId: string;
+  analyzedRevision: number;
+  revision: number;
+  diagnostics: Diagnostic[];
+};
 type Pending =
   | { kind: "leave"; proceed(): void }
   | { kind: "delete"; document: TextDocument };
@@ -41,10 +61,35 @@ export function App({ host }: { host: EditorHost }) {
   const [busy, setBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [proofreadingOpen, setProofreadingOpen] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(
+    null,
+  );
+  const [catalog, setCatalog] = useState<PluginDescriptor[]>([]);
+  const [diagnosticDisplay, setDiagnosticDisplay] =
+    useState<DiagnosticDisplay | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [composing, setComposing] = useState(false);
+  const [format, setFormat] = useState<"text" | "markdown">("text");
+  const [manualAnalysis, setManualAnalysis] = useState(false);
+  const [initialAnalysisSettings] = useState(() =>
+    safelyLoadAnalysisSettings(window.localStorage),
+  );
+  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings>(
+    initialAnalysisSettings.settings,
+  );
+  const [analysisError, setAnalysisError] = useState(
+    initialAnalysisSettings.error,
+  );
+  const analysisSettingsRaw = useRef(
+    window.localStorage.getItem("quadruple-quotes.proofreading-settings.v1"),
+  );
   const editor = useRef<HTMLTextAreaElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const draftRef = useRef(draft);
+  const revisionRef = useRef(revision);
   draftRef.current = draft;
+  revisionRef.current = revision;
   const saved = documents.find((item) => item.id === draft?.id);
   const dirty =
     draft !== null &&
@@ -88,8 +133,87 @@ export function App({ host }: { host: EditorHost }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [dirty, pending, busy, save]);
 
-  // Focus only on selection changes; typing must preserve caret and IME state.
+  useEffect(() => {
+    if (!proofreadingOpen || analysisError) return;
+    void host.analysis
+      .catalog()
+      .then(setCatalog)
+      .catch((error: unknown) => setAnalysisError(errorMessage(error)));
+  }, [host, proofreadingOpen, analysisError]);
+
+  useEffect(() => () => host.analysis.dispose(), [host]);
+
+  useEffect(() => {
+    if (!proofreadingOpen) setManualAnalysis(false);
+  }, [proofreadingOpen]);
+
+  useEffect(() => {
+    if (!proofreadingOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProofreadingOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [proofreadingOpen]);
+
   const draftId = draft?.id;
+  const body = draft?.body;
+  const runDependencies = manualAnalysis && proofreadingOpen;
+  useEffect(() => {
+    if (!draftId || body === undefined || composing || analysisError) return;
+    const documentId = draftId;
+    const expectedRevision = revision;
+    const timer = window.setTimeout(() => {
+      void host.analysis
+        .analyze({
+          documentId,
+          revision: expectedRevision,
+          text: body,
+          format,
+          settings: analysisSettings,
+          manual: runDependencies,
+        })
+        .then((result) => {
+          if (
+            draftRef.current?.id === documentId &&
+            revisionRef.current === expectedRevision &&
+            result.documentId === documentId &&
+            result.revision === expectedRevision
+          ) {
+            setAnalysisResult(result);
+            setDiagnosticDisplay({
+              documentId,
+              analyzedRevision: expectedRevision,
+              revision: expectedRevision,
+              diagnostics: result.diagnostics,
+            });
+          }
+        })
+        .catch((error: unknown) => {
+          if (
+            draftRef.current?.id === documentId &&
+            revisionRef.current === expectedRevision
+          )
+            setAnalysisError(errorMessage(error));
+        });
+    }, 350);
+    return () => {
+      window.clearTimeout(timer);
+      host.analysis.dispose();
+    };
+  }, [
+    draftId,
+    body,
+    composing,
+    revision,
+    format,
+    host,
+    analysisSettings,
+    runDependencies,
+    analysisError,
+  ]);
+
+  // Focus only on selection changes; typing must preserve caret and IME state.
   useEffect(() => {
     if (draftId) titleInput.current?.focus();
   }, [draftId]);
@@ -100,7 +224,11 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function open(document: TextDocument | null) {
+    draftRef.current = document;
     setDraft(document);
+    advanceRevision();
+    setAnalysisResult(null);
+    setDiagnosticDisplay(null);
     setNotice(null);
     setSidebarOpen(false);
   }
@@ -126,8 +254,47 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function update(field: "title" | "body", value: string) {
-    setDraft((current) => (current ? { ...current, [field]: value } : null));
+    const current = draftRef.current;
+    if (!current || current[field] === value) return;
+    draftRef.current = { ...current, [field]: value };
+    setDraft(draftRef.current);
+    if (field === "body") {
+      const previousRevision = revisionRef.current;
+      const nextRevision = advanceRevision();
+      setDiagnosticDisplay((display) =>
+        display?.documentId === current.id &&
+        display.revision === previousRevision
+          ? {
+              ...display,
+              revision: nextRevision,
+              diagnostics: trackDiagnostics(
+                current.body,
+                value,
+                display.diagnostics,
+              ),
+            }
+          : null,
+      );
+    }
     setNotice(null);
+  }
+
+  function advanceRevision() {
+    revisionRef.current += 1;
+    setRevision(revisionRef.current);
+    return revisionRef.current;
+  }
+
+  function recheck() {
+    const nextRevision = advanceRevision();
+    setDiagnosticDisplay((display) =>
+      display ? { ...display, revision: nextRevision } : null,
+    );
+  }
+
+  function invalidateAnalysis() {
+    advanceRevision();
+    setDiagnosticDisplay(null);
   }
 
   async function copy() {
@@ -256,7 +423,21 @@ export function App({ host }: { host: EditorHost }) {
   ).length;
   const listed = inView(documents, showArchived);
   if (draft && !saved) listed.unshift(draft);
-  const characters = draft ? Array.from(draft.body).length : 0;
+  const unicodeScalars = draft ? Array.from(draft.body).length : 0;
+  const currentAnalysis =
+    !composing &&
+    !analysisError &&
+    analysisResult?.documentId === draftId &&
+    analysisResult?.revision === revision
+      ? analysisResult
+      : null;
+  const displayedDiagnostics =
+    !analysisError &&
+    diagnosticDisplay &&
+    diagnosticDisplay.documentId === draftId &&
+    diagnosticDisplay.revision === revision
+      ? diagnosticDisplay.diagnostics
+      : [];
 
   return (
     <div className="workspace">
@@ -442,6 +623,13 @@ export function App({ host }: { host: EditorHost }) {
               <div className="toolbar-actions">
                 <button
                   type="button"
+                  aria-pressed={proofreadingOpen}
+                  onClick={() => setProofreadingOpen((open) => !open)}
+                >
+                  Proofreading
+                </button>
+                <button
+                  type="button"
                   aria-label="Copy"
                   onClick={copy}
                   disabled={busy || !draft.body}
@@ -499,25 +687,68 @@ export function App({ host }: { host: EditorHost }) {
               <div className="editor-hint">
                 A space to think. Make it yours.
               </div>
+              <div className="format-control">
+                <label htmlFor="text-format">Format</label>
+                <select
+                  id="text-format"
+                  value={format}
+                  onChange={(event) => {
+                    setFormat(event.target.value as "text" | "markdown");
+                    invalidateAnalysis();
+                  }}
+                >
+                  <option value="text">Plain text</option>
+                  <option value="markdown">Markdown</option>
+                </select>
+              </div>
               <label className="sr-only" htmlFor="text-body">
                 Text body
               </label>
-              <textarea
-                id="text-body"
-                ref={editor}
-                className="body-input"
+              <BodyEditor
+                key={draft.id}
+                inputRef={editor}
                 value={draft.body}
-                placeholder="Start writing, or paste something you’d like to keep…"
-                onChange={(event) => update("body", event.target.value)}
+                diagnostics={displayedDiagnostics}
+                pending={
+                  composing || diagnosticDisplay?.analyzedRevision !== revision
+                }
+                composing={composing}
+                onChange={(value) => update("body", value)}
+                onCompositionStart={() => {
+                  setComposing(true);
+                  recheck();
+                }}
+                onCompositionEnd={() => {
+                  setComposing(false);
+                  recheck();
+                }}
                 disabled={busy}
-                spellCheck={false}
               />
             </div>
             <footer className="editor-footer">
               <span>
-                {characters.toLocaleString()} characters
+                {unicodeScalars.toLocaleString()} Unicode scalars
                 <span className="footer-dot">·</span>Plain text
               </span>
+              <button
+                type="button"
+                id="inline-proofreading-summary"
+                className="inline-proofreading-summary"
+                onClick={() => setProofreadingOpen(true)}
+                aria-label="Open proofreading issues"
+              >
+                {analysisError
+                  ? "Proofreading unavailable"
+                  : currentAnalysis
+                    ? draft.body.length > 100_000
+                      ? "Checks skipped: text too long"
+                      : `Checks: ${currentAnalysis.diagnostics.length}${currentAnalysis.truncated ? "+" : ""} issue${currentAnalysis.diagnostics.length === 1 ? "" : "s"}`
+                    : composing
+                      ? "Checks paused while typing"
+                      : displayedDiagnostics.length
+                        ? `Checking… ${displayedDiagnostics.length} previous issue${displayedDiagnostics.length === 1 ? "" : "s"}`
+                        : "Checking…"}
+              </button>
               <button
                 type="button"
                 className="delete-button"
@@ -587,6 +818,62 @@ export function App({ host }: { host: EditorHost }) {
           {pending ? null : notice?.text}
         </div>
       </main>
+      <ProofreadingPanel
+        open={proofreadingOpen}
+        result={currentAnalysis}
+        catalog={catalog}
+        onClose={() => setProofreadingOpen(false)}
+        onSelect={(start, end) => {
+          if (!editor.current || composing) return;
+          editor.current.focus();
+          editor.current.setSelectionRange(start, end);
+        }}
+        settings={analysisSettings}
+        onSettings={(settings) => {
+          try {
+            analysisSettingsRaw.current = saveAnalysisSettings(
+              window.localStorage,
+              settings,
+              analysisSettingsRaw.current,
+            );
+            setAnalysisSettings(settings);
+            setAnalysisError(null);
+            invalidateAnalysis();
+          } catch (error) {
+            setAnalysisError(errorMessage(error));
+          }
+        }}
+        onDependencies={() => {
+          setManualAnalysis(true);
+          recheck();
+        }}
+      />
+      {analysisError && (
+        <div className="notice notice-error" role="alert">
+          Proofreading is disabled: {analysisError}{" "}
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                const settings = resetAnalysisSettings(
+                  window.localStorage,
+                  analysisSettingsRaw.current,
+                );
+                analysisSettingsRaw.current = window.localStorage.getItem(
+                  "quadruple-quotes.proofreading-settings.v1",
+                );
+                setAnalysisSettings(settings);
+                setAnalysisError(null);
+                invalidateAnalysis();
+              } catch (error) {
+                setAnalysisError(errorMessage(error));
+              }
+            }}
+          >
+            Reset proofreading settings
+          </button>
+        </div>
+      )}
       {pending && (
         <Confirmation
           kind={pending.kind}

@@ -1,3 +1,4 @@
+import { BrowserAnalysisPort } from "./analysis-port";
 import init, { TextWorkspace } from "./generated/quadruple_quotes";
 import wasmUrl from "./generated/quadruple_quotes_bg.wasm?url";
 import type { EditorHost, TextDocument, TextRepository } from "./ports";
@@ -70,6 +71,7 @@ export async function createBrowserHost(): Promise<EditorHost> {
   await init({ module_or_path: wasmUrl });
   return {
     repository: new BrowserTextRepository(window.localStorage),
+    analysis: new BrowserAnalysisPort(),
     clipboard: {
       readText: () => navigator.clipboard.readText(),
       writeText: (text) => navigator.clipboard.writeText(text),
