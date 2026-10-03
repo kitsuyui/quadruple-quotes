@@ -7,6 +7,7 @@ export interface DiagnosticSegment {
   start: number;
   end: number;
   severity?: Severity;
+  diagnosticIndices?: number[];
 }
 
 const priority: Record<Severity, number> = { info: 1, warning: 2, error: 3 };
@@ -35,8 +36,10 @@ export function diagnosticSegments(
     return low;
   }
 
-  const ranges: DiagnosticSegment[] = [];
-  for (const diagnostic of diagnostics.slice(0, 200)) {
+  const ranges: (DiagnosticSegment & { diagnosticIndex: number })[] = [];
+  for (const [diagnosticIndex, diagnostic] of diagnostics
+    .slice(0, 200)
+    .entries()) {
     const { start, end } = diagnostic.range;
     if (
       !Number.isInteger(start) ||
@@ -61,6 +64,7 @@ export function diagnosticSegments(
       start: displayStart,
       end: displayEnd,
       severity: diagnostic.severity,
+      diagnosticIndex,
     });
   }
 
@@ -76,18 +80,29 @@ export function diagnosticSegments(
     const start = offsets[index];
     const end = offsets[index + 1];
     let severity: Severity | undefined;
+    const diagnosticIndices: number[] = [];
     for (const range of ranges) {
-      if (
-        range.start <= start &&
-        range.end >= end &&
-        range.severity &&
-        (!severity || priority[range.severity] > priority[severity])
-      )
-        severity = range.severity;
+      if (range.start <= start && range.end >= end && range.severity) {
+        diagnosticIndices.push(range.diagnosticIndex);
+        if (!severity || priority[range.severity] > priority[severity])
+          severity = range.severity;
+      }
     }
     const previous = segments.at(-1);
-    if (previous && previous.severity === severity) previous.end = end;
-    else segments.push({ start, end, severity });
+    const indices = diagnosticIndices.length ? diagnosticIndices : undefined;
+    if (
+      previous &&
+      previous.severity === severity &&
+      previous.diagnosticIndices?.join(",") === indices?.join(",")
+    )
+      previous.end = end;
+    else
+      segments.push({
+        start,
+        end,
+        severity,
+        ...(indices ? { diagnosticIndices: indices } : {}),
+      });
   }
   return segments;
 }

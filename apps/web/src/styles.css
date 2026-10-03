@@ -621,6 +621,53 @@ button.primary:hover:not(:disabled) {
 .inline-info {
   text-decoration-color: #4775a4;
 }
+.diagnostic-tooltip {
+  position: fixed;
+  z-index: 8;
+  visibility: hidden;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(280px, calc(100dvh - 16px));
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid #dfe3d8;
+  border-radius: 9px;
+  background: #fffefa;
+  color: #343b2e;
+  box-shadow: 0 5px 20px #28312026;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.diagnostic-tooltip ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.diagnostic-tooltip li + li {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.diagnostic-tooltip p {
+  margin: 3px 0;
+}
+.diagnostic-tooltip small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.diagnostic-severity {
+  color: #a22f2f;
+  font-size: 10px;
+  font-weight: 600;
+}
+.diagnostic-info {
+  color: #4775a4;
+}
+.diagnostic-suggestions {
+  color: #465d43;
+}
 .inline-proofreading-summary {
   color: #797c73;
   padding: 6px;
