@@ -155,6 +155,7 @@ export async function runTrustedAdapters(
           ruleId: `markdownlint.${issue.ruleNames[0]}`,
           message: issue.ruleDescription,
           severity: "warning",
+          invalidationScope: "document",
           range: {
             start,
             end: start + Math.max(1, issue.errorRange?.[1] ?? 1),
@@ -277,6 +278,15 @@ export async function runTrustedAdapters(
                   ? "error"
                   : "warning",
           range: { start: issue.range[0], end: issue.range[1] },
+          // Markdown parser context and mixed-period checks can affect distant text.
+          invalidationScope:
+            request.format === "markdown" || issue.ruleId === "mixed-period"
+              ? "document"
+              : issue.ruleId === "invalid-control"
+                ? "range"
+                : issue.ruleId === "no-nfd"
+                  ? "paragraph"
+                  : "sentence",
         });
       if (textlintEnabled)
         statuses.push({ pluginId: textlint.id, status: "ok" });

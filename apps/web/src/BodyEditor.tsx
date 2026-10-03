@@ -31,6 +31,8 @@ export function BodyEditor({
   inputRef,
   value,
   diagnostics,
+  pending,
+  composing,
   disabled,
   onChange,
   onCompositionStart,
@@ -39,6 +41,8 @@ export function BodyEditor({
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string;
   diagnostics: Diagnostic[];
+  pending: boolean;
+  composing: boolean;
   disabled: boolean;
   onChange(value: string): void;
   onCompositionStart(): void;
@@ -116,6 +120,7 @@ export function BodyEditor({
   }
 
   function pointAt(x: number, y: number, source: TooltipTarget["source"]) {
+    if (composing) return;
     const map = geometry();
     const hit =
       map &&
@@ -139,6 +144,7 @@ export function BodyEditor({
   }
 
   function selectIssue() {
+    if (composing) return;
     const input = inputRef.current;
     const previous = dismissed.current;
     if (
@@ -307,6 +313,7 @@ export function BodyEditor({
         <DiagnosticTooltip
           id={tooltipId}
           diagnostics={issues}
+          pending={pending}
           anchor={target.rect}
           onEnter={cancelLeave}
           onLeave={leave}

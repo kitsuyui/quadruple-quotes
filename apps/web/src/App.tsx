@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { trackDiagnostics } from "../../../packages/analysis/src/diagnostic-tracking";
 import type {
   AnalysisResult,
   AnalysisSettings,
+  Diagnostic,
   PluginDescriptor,
 } from "../../../packages/analysis/src/types";
 import {
@@ -17,6 +19,12 @@ import type { EditorHost, TextDocument } from "./ports";
 import { TextActions } from "./TextActions";
 
 type Notice = { text: string; error: boolean };
+type DiagnosticDisplay = {
+  documentId: string;
+  analyzedRevision: number;
+  revision: number;
+  diagnostics: Diagnostic[];
+};
 type Pending =
   | { kind: "leave"; proceed(): void }
   | { kind: "delete"; document: TextDocument };
@@ -58,6 +66,8 @@ export function App({ host }: { host: EditorHost }) {
     null,
   );
   const [catalog, setCatalog] = useState<PluginDescriptor[]>([]);
+  const [diagnosticDisplay, setDiagnosticDisplay] =
+    useState<DiagnosticDisplay | null>(null);
   const [revision, setRevision] = useState(0);
   const [composing, setComposing] = useState(false);
   const [format, setFormat] = useState<"text" | "markdown">("text");
@@ -169,8 +179,15 @@ export function App({ host }: { host: EditorHost }) {
             revisionRef.current === expectedRevision &&
             result.documentId === documentId &&
             result.revision === expectedRevision
-          )
+          ) {
             setAnalysisResult(result);
+            setDiagnosticDisplay({
+              documentId,
+              analyzedRevision: expectedRevision,
+              revision: expectedRevision,
+              diagnostics: result.diagnostics,
+            });
+          }
         })
         .catch((error: unknown) => {
           if (
@@ -207,9 +224,11 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function open(document: TextDocument | null) {
+    draftRef.current = document;
     setDraft(document);
-    setRevision((current) => current + 1);
+    advanceRevision();
     setAnalysisResult(null);
+    setDiagnosticDisplay(null);
     setNotice(null);
     setSidebarOpen(false);
   }
@@ -235,13 +254,47 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function update(field: "title" | "body", value: string) {
-    setDraft((current) => (current ? { ...current, [field]: value } : null));
+    const current = draftRef.current;
+    if (!current || current[field] === value) return;
+    draftRef.current = { ...current, [field]: value };
+    setDraft(draftRef.current);
     if (field === "body") {
-      revisionRef.current += 1;
-      setRevision(revisionRef.current);
-      setAnalysisResult(null);
+      const previousRevision = revisionRef.current;
+      const nextRevision = advanceRevision();
+      setDiagnosticDisplay((display) =>
+        display?.documentId === current.id &&
+        display.revision === previousRevision
+          ? {
+              ...display,
+              revision: nextRevision,
+              diagnostics: trackDiagnostics(
+                current.body,
+                value,
+                display.diagnostics,
+              ),
+            }
+          : null,
+      );
     }
     setNotice(null);
+  }
+
+  function advanceRevision() {
+    revisionRef.current += 1;
+    setRevision(revisionRef.current);
+    return revisionRef.current;
+  }
+
+  function recheck() {
+    const nextRevision = advanceRevision();
+    setDiagnosticDisplay((display) =>
+      display ? { ...display, revision: nextRevision } : null,
+    );
+  }
+
+  function invalidateAnalysis() {
+    advanceRevision();
+    setDiagnosticDisplay(null);
   }
 
   async function copy() {
@@ -378,6 +431,13 @@ export function App({ host }: { host: EditorHost }) {
     analysisResult?.revision === revision
       ? analysisResult
       : null;
+  const displayedDiagnostics =
+    !analysisError &&
+    diagnosticDisplay &&
+    diagnosticDisplay.documentId === draftId &&
+    diagnosticDisplay.revision === revision
+      ? diagnosticDisplay.diagnostics
+      : [];
 
   return (
     <div className="workspace">
@@ -634,7 +694,7 @@ export function App({ host }: { host: EditorHost }) {
                   value={format}
                   onChange={(event) => {
                     setFormat(event.target.value as "text" | "markdown");
-                    setRevision((current) => current + 1);
+                    invalidateAnalysis();
                   }}
                 >
                   <option value="text">Plain text</option>
@@ -648,18 +708,19 @@ export function App({ host }: { host: EditorHost }) {
                 key={draft.id}
                 inputRef={editor}
                 value={draft.body}
-                diagnostics={currentAnalysis?.diagnostics ?? []}
+                diagnostics={displayedDiagnostics}
+                pending={
+                  composing || diagnosticDisplay?.analyzedRevision !== revision
+                }
+                composing={composing}
                 onChange={(value) => update("body", value)}
                 onCompositionStart={() => {
                   setComposing(true);
-                  revisionRef.current += 1;
-                  setRevision(revisionRef.current);
-                  setAnalysisResult(null);
+                  recheck();
                 }}
                 onCompositionEnd={() => {
                   setComposing(false);
-                  revisionRef.current += 1;
-                  setRevision(revisionRef.current);
+                  recheck();
                 }}
                 disabled={busy}
               />
@@ -684,7 +745,9 @@ export function App({ host }: { host: EditorHost }) {
                       : `Checks: ${currentAnalysis.diagnostics.length}${currentAnalysis.truncated ? "+" : ""} issue${currentAnalysis.diagnostics.length === 1 ? "" : "s"}`
                     : composing
                       ? "Checks paused while typing"
-                      : "Checking…"}
+                      : displayedDiagnostics.length
+                        ? `Checking… ${displayedDiagnostics.length} previous issue${displayedDiagnostics.length === 1 ? "" : "s"}`
+                        : "Checking…"}
               </button>
               <button
                 type="button"
@@ -775,14 +838,14 @@ export function App({ host }: { host: EditorHost }) {
             );
             setAnalysisSettings(settings);
             setAnalysisError(null);
-            setRevision((current) => current + 1);
+            invalidateAnalysis();
           } catch (error) {
             setAnalysisError(errorMessage(error));
           }
         }}
         onDependencies={() => {
           setManualAnalysis(true);
-          setRevision((current) => current + 1);
+          recheck();
         }}
       />
       {analysisError && (
@@ -801,7 +864,7 @@ export function App({ host }: { host: EditorHost }) {
                 );
                 setAnalysisSettings(settings);
                 setAnalysisError(null);
-                setRevision((current) => current + 1);
+                invalidateAnalysis();
               } catch (error) {
                 setAnalysisError(errorMessage(error));
               }

@@ -13,7 +13,7 @@
     "format": "cargo fmt --all && biome check --write .",
     "lint": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && biome check .",
     "test": "cargo test --workspace",
-    "test:unit": "bun test tests/analysis-settings.test.ts tests/native-host.test.ts tests/inline-diagnostics.test.ts",
+    "test:unit": "bun test tests/analysis-settings.test.ts tests/native-host.test.ts tests/inline-diagnostics.test.ts tests/diagnostic-tracking.test.ts",
     "test:e2e": "playwright test",
     "check": "bun run lint && bun run test && bun run test:unit && bun run build && bun run test:e2e"
   },

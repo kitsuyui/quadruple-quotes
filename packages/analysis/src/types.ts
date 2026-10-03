@@ -13,6 +13,9 @@ export interface Diagnostic {
   message: string;
   severity: Severity;
   range: Range;
+  /** Context that must stay unchanged to retain this diagnostic during editing.
+   * Missing metadata conservatively invalidates on any document edit. */
+  invalidationScope?: "range" | "word" | "sentence" | "paragraph" | "document";
   suggestions?: string[];
 }
 

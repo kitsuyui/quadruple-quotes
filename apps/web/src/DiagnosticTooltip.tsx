@@ -5,12 +5,14 @@ import type { Diagnostic } from "../../../packages/analysis/src/types";
 export function DiagnosticTooltip({
   id,
   diagnostics,
+  pending,
   anchor,
   onEnter,
   onLeave,
 }: {
   id: string;
   diagnostics: Diagnostic[];
+  pending: boolean;
   anchor: { left: number; top: number; bottom: number };
   onEnter(): void;
   onLeave(): void;
@@ -65,7 +67,7 @@ export function DiagnosticTooltip({
           </li>
         ))}
       </ul>
-      <small>Esc to dismiss</small>
+      <small>{pending ? "Rechecking… · " : ""}Esc to dismiss</small>
     </div>,
     document.body,
   );

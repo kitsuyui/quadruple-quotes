@@ -68,8 +68,21 @@ pub struct Diagnostic {
     pub message: String,
     pub severity: Severity,
     pub range: TextRange,
+    #[serde(default)]
+    pub invalidation_scope: InvalidationScope,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestions: Option<Vec<String>>,
+}
+/// Context that an editor must invalidate when retaining an older diagnostic.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InvalidationScope {
+    Range,
+    Word,
+    Sentence,
+    Paragraph,
+    #[default]
+    Document,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -305,6 +318,7 @@ fn core_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
                     end: start + ch.len_utf16(),
                 },
                 suggestions: None,
+                invalidation_scope: InvalidationScope::Range,
             });
         }
     }
@@ -324,6 +338,7 @@ fn core_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
                 end: request.text.encode_utf16().count(),
             },
             suggestions: None,
+            invalidation_scope: InvalidationScope::Document,
         });
     }
 }
@@ -375,6 +390,7 @@ fn typo_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
             severity: Severity::Warning,
             range: TextRange { start, end },
             suggestions,
+            invalidation_scope: InvalidationScope::Word,
         });
     }
 }
@@ -403,6 +419,10 @@ fn style_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
                     end: start + phrase.encode_utf16().count(),
                 },
                 suggestions: None,
+                invalidation_scope: match request.format {
+                    TextFormat::Markdown => InvalidationScope::Document,
+                    TextFormat::Text => InvalidationScope::Sentence,
+                },
             });
         }
     }
