@@ -24,20 +24,39 @@ async function expandPlugin(page: Page, name: string) {
   return plugin;
 }
 
-test("proofreading keeps its worker unloaded until the panel opens", async ({
+test("proofreading keeps its worker unloaded until there is a draft and checks without opening the panel", async ({
   page,
 }) => {
   const workers: string[] = [];
   page.on("worker", (worker) => workers.push(worker.url()));
 
-  await createText(page, "Lazy analysis", "A saved sentence.");
+  await page.goto("/");
   await page.waitForTimeout(500);
   expect(workers).toEqual([]);
-
-  await openProofreading(page);
+  await createText(page, "Inline analysis", "A saved sentence with teh typo.");
   await expect
     .poll(() => workers.some((url) => url.includes("analysis-worker")))
     .toBe(true);
+  await expect(page.locator(".inline-diagnostic")).toHaveText("teh");
+  await expect(
+    page.getByRole("complementary", { name: "Proofreading" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Open proofreading issues" }),
+  ).toHaveText("Checks: 1 issue");
+  await openProofreading(page);
+  await page.getByRole("button", { name: "Close proofreading" }).click();
+  await page
+    .getByLabel("Text body", { exact: true })
+    .fill("A saved sentence with adress typo.");
+  await expect(page.locator(".inline-diagnostic")).toHaveText("adress");
+  await page
+    .getByLabel("Text body", { exact: true })
+    .fill("A saved sentence with no typo.");
+  await expect(page.locator(".inline-diagnostic")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Open proofreading issues" }),
+  ).toHaveText("Checks: 0 issues");
 });
 
 test("Unicode metrics and a UTF-16 diagnostic range select the original editor text", async ({

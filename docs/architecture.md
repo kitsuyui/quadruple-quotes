@@ -44,6 +44,10 @@ Saving is local to the current browser profile and origin. It is not a file down
 
 Separate analysis, storage, transport, and UI contributions instead of a single global plugin object. The analysis worker receives an immutable document/revision and returns diagnostics or proposed edits; the host decides when to apply them. Its trusted adapter catalog contains only bundled modules, loaded only when enabled. It does not load user-provided code or a remote plugin registry.
 
+Realtime analysis follows the current draft independently of the Proofreading panel. Updates cancel prior worker work, clear visible diagnostics immediately, and schedule a new request after 350 ms; composition suspends scheduling. Only results matching the current document and revision reach either the inline layer or the panel. The catalog remains lazy until the panel opens, and native dependency runs remain gated by an explicit request and an open panel.
+
+`BodyEditor` retains a native textarea for editing, clipboard shortcuts, selection, and IME. An aria-hidden, noninteractive mirror renders only wavy decorations, sharing typography, padding, wrapping, width, and scroll offsets with the textarea. Display ranges expand to whole graphemes and provide nearby anchors for invisible or insertion diagnostics; original UTF-16 ranges remain unchanged for panel selection and future host adapters. Overlapping ranges render the strongest severity without duplicating text. No mirror text is rendered when there are no diagnostics or input exceeds the analysis limit; display work is capped at 200 diagnostics. The footer provides a keyboard-accessible path to messages and rule controls.
+
 LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports.
 
 ## Reference patterns

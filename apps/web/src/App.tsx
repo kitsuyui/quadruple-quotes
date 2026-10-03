@@ -9,6 +9,7 @@ import {
   safelyLoadAnalysisSettings,
   saveAnalysisSettings,
 } from "./analysis-settings";
+import { BodyEditor } from "./BodyEditor";
 import { Confirmation } from "./Confirmation";
 import { Icon } from "./Icon";
 import { ProofreadingPanel } from "./ProofreadingPanel";
@@ -128,8 +129,13 @@ export function App({ host }: { host: EditorHost }) {
       .catalog()
       .then(setCatalog)
       .catch((error: unknown) => setAnalysisError(errorMessage(error)));
-    return () => host.analysis.dispose();
   }, [host, proofreadingOpen, analysisError]);
+
+  useEffect(() => () => host.analysis.dispose(), [host]);
+
+  useEffect(() => {
+    if (!proofreadingOpen) setManualAnalysis(false);
+  }, [proofreadingOpen]);
 
   useEffect(() => {
     if (!proofreadingOpen) return;
@@ -140,19 +146,22 @@ export function App({ host }: { host: EditorHost }) {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [proofreadingOpen]);
 
+  const draftId = draft?.id;
+  const body = draft?.body;
+  const runDependencies = manualAnalysis && proofreadingOpen;
   useEffect(() => {
-    if (!draft || composing || !proofreadingOpen || analysisError) return;
-    const documentId = draft.id;
+    if (!draftId || body === undefined || composing || analysisError) return;
+    const documentId = draftId;
     const expectedRevision = revision;
     const timer = window.setTimeout(() => {
       void host.analysis
         .analyze({
           documentId,
           revision: expectedRevision,
-          text: draft.body,
+          text: body,
           format,
           settings: analysisSettings,
-          manual: manualAnalysis,
+          manual: runDependencies,
         })
         .then((result) => {
           if (
@@ -163,23 +172,31 @@ export function App({ host }: { host: EditorHost }) {
           )
             setAnalysisResult(result);
         })
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          if (
+            draftRef.current?.id === documentId &&
+            revisionRef.current === expectedRevision
+          )
+            setAnalysisError(errorMessage(error));
+        });
     }, 350);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      host.analysis.dispose();
+    };
   }, [
-    draft,
+    draftId,
+    body,
     composing,
-    proofreadingOpen,
     revision,
     format,
     host,
     analysisSettings,
-    manualAnalysis,
+    runDependencies,
     analysisError,
   ]);
 
   // Focus only on selection changes; typing must preserve caret and IME state.
-  const draftId = draft?.id;
   useEffect(() => {
     if (draftId) titleInput.current?.focus();
   }, [draftId]);
@@ -354,6 +371,13 @@ export function App({ host }: { host: EditorHost }) {
   const listed = inView(documents, showArchived);
   if (draft && !saved) listed.unshift(draft);
   const unicodeScalars = draft ? Array.from(draft.body).length : 0;
+  const currentAnalysis =
+    !composing &&
+    !analysisError &&
+    analysisResult?.documentId === draftId &&
+    analysisResult?.revision === revision
+      ? analysisResult
+      : null;
 
   return (
     <div className="workspace">
@@ -620,13 +644,12 @@ export function App({ host }: { host: EditorHost }) {
               <label className="sr-only" htmlFor="text-body">
                 Text body
               </label>
-              <textarea
-                id="text-body"
-                ref={editor}
-                className="body-input"
+              <BodyEditor
+                key={draft.id}
+                inputRef={editor}
                 value={draft.body}
-                placeholder="Start writing, or paste something you’d like to keep…"
-                onChange={(event) => update("body", event.target.value)}
+                diagnostics={currentAnalysis?.diagnostics ?? []}
+                onChange={(value) => update("body", value)}
                 onCompositionStart={() => {
                   setComposing(true);
                   revisionRef.current += 1;
@@ -639,7 +662,6 @@ export function App({ host }: { host: EditorHost }) {
                   setRevision(revisionRef.current);
                 }}
                 disabled={busy}
-                spellCheck={false}
               />
             </div>
             <footer className="editor-footer">
@@ -647,6 +669,23 @@ export function App({ host }: { host: EditorHost }) {
                 {unicodeScalars.toLocaleString()} Unicode scalars
                 <span className="footer-dot">·</span>Plain text
               </span>
+              <button
+                type="button"
+                id="inline-proofreading-summary"
+                className="inline-proofreading-summary"
+                onClick={() => setProofreadingOpen(true)}
+                aria-label="Open proofreading issues"
+              >
+                {analysisError
+                  ? "Proofreading unavailable"
+                  : currentAnalysis
+                    ? draft.body.length > 100_000
+                      ? "Checks skipped: text too long"
+                      : `Checks: ${currentAnalysis.diagnostics.length}${currentAnalysis.truncated ? "+" : ""} issue${currentAnalysis.diagnostics.length === 1 ? "" : "s"}`
+                    : composing
+                      ? "Checks paused while typing"
+                      : "Checking…"}
+              </button>
               <button
                 type="button"
                 className="delete-button"
@@ -718,7 +757,7 @@ export function App({ host }: { host: EditorHost }) {
       </main>
       <ProofreadingPanel
         open={proofreadingOpen}
-        result={analysisResult}
+        result={currentAnalysis}
         catalog={catalog}
         onClose={() => setProofreadingOpen(false)}
         onSelect={(start, end) => {
