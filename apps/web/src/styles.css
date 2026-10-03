@@ -290,7 +290,7 @@ button.primary:hover:not(:disabled) {
   margin-left: auto;
 }
 .text-list:has(.text-actions[open]) {
-  padding-bottom: 110px;
+  padding-bottom: 150px;
 }
 .library-empty {
   color: #a0a495;

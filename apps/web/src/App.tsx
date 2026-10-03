@@ -228,6 +228,29 @@ export function App({ host }: { host: EditorHost }) {
     setPending({ kind: "delete", document });
   }
 
+  function duplicate(id: string) {
+    try {
+      const copy = host.repository.duplicate(id, host.createId(), host.now());
+      setDocuments(host.repository.list());
+      setShowArchived(false);
+      open(copy);
+      setNotice({
+        text: "Text duplicated. You’re editing the copy.",
+        error: false,
+      });
+    } catch (error) {
+      setNotice({
+        text: `Could not duplicate. Your text and draft are still here. ${errorMessage(error)}`,
+        error: true,
+      });
+    }
+  }
+
+  function requestDuplicate(document: TextDocument) {
+    setNotice(null);
+    transition(() => duplicate(document.id));
+  }
+
   const archivedCount = documents.filter(
     (document) => document.archived,
   ).length;
@@ -332,8 +355,9 @@ export function App({ host }: { host: EditorHost }) {
                 <TextActions
                   title={displayTitle(visible)}
                   archived={document.archived}
-                  canArchive={documents.some((item) => item.id === document.id)}
+                  saved={documents.some((item) => item.id === document.id)}
                   disabled={busy}
+                  onDuplicate={() => requestDuplicate(document)}
                   onArchive={() => requestArchive(document)}
                   onDelete={() => requestDelete(visible)}
                 />

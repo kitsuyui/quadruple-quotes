@@ -31,6 +31,19 @@ impl TextWorkspace {
         self.inner.delete(id).map_err(js_error)
     }
 
+    pub fn duplicate(
+        &mut self,
+        id: &str,
+        new_id: &str,
+        updated_at: u64,
+    ) -> Result<String, JsValue> {
+        let document = self
+            .inner
+            .duplicate(id, new_id, updated_at)
+            .map_err(js_error)?;
+        serde_json::to_string(&document).map_err(js_error)
+    }
+
     pub fn set_archived(&mut self, id: &str, archived: bool) -> Result<(), JsValue> {
         self.inner.set_archived(id, archived).map_err(js_error)
     }

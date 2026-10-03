@@ -117,6 +117,44 @@ impl Workspace {
         Ok(())
     }
 
+    /// Copies a saved document into an active, independently editable document.
+    pub fn duplicate(
+        &mut self,
+        id: &str,
+        new_id: &str,
+        updated_at: u64,
+    ) -> Result<Document, WorkspaceError> {
+        validate_id(new_id)?;
+        if self
+            .snapshot
+            .documents
+            .iter()
+            .any(|document| document.id == new_id)
+        {
+            return Err(WorkspaceError::DuplicateId(new_id.to_owned()));
+        }
+        let source = self
+            .snapshot
+            .documents
+            .iter()
+            .find(|document| document.id == id)
+            .ok_or_else(|| WorkspaceError::NotFound(id.to_owned()))?;
+        let title = if source.title.trim().is_empty() {
+            "Untitled text"
+        } else {
+            &source.title
+        };
+        let document = Document {
+            id: new_id.to_owned(),
+            title: format!("{title} (copy)"),
+            body: source.body.clone(),
+            updated_at,
+            archived: false,
+        };
+        self.snapshot.documents.push(document.clone());
+        Ok(document)
+    }
+
     /// Archives/restores a document without changing its text or edit timestamp.
     pub fn set_archived(&mut self, id: &str, archived: bool) -> Result<(), WorkspaceError> {
         let document = self
@@ -190,7 +228,33 @@ mod tests {
         assert!(workspace.save(text("bad id", "discard")).is_err());
         assert!(workspace.delete("missing").is_err());
         assert!(workspace.set_archived("missing", true).is_err());
+        assert!(workspace.duplicate("missing", "copy", 456).is_err());
+        assert!(matches!(
+            workspace.duplicate("one", "one", 456),
+            Err(WorkspaceError::DuplicateId(_))
+        ));
+        assert!(workspace.duplicate("one", "bad id", 456).is_err());
         assert_eq!(workspace.to_json().unwrap(), before);
+    }
+
+    #[test]
+    fn duplicate_preserves_source_and_creates_an_independent_active_copy() {
+        let mut workspace = Workspace::default();
+        let mut original = text("one", "  日本語 📝\n\nCafe\u{301}\t\n");
+        original.archived = true;
+        workspace.save(original.clone()).unwrap();
+        let copy = workspace.duplicate("one", "copy", 456).unwrap();
+        assert_eq!(copy.id, "copy");
+        assert_eq!(copy.title, "Notes (copy)");
+        assert_eq!(copy.body, original.body);
+        assert_eq!(copy.updated_at, 456);
+        assert!(!copy.archived);
+        let mut reloaded = Workspace::from_json(&workspace.to_json().unwrap()).unwrap();
+        assert_eq!(reloaded.documents(), &[original.clone(), copy]);
+        reloaded.save(text("copy", "Edit only the copy")).unwrap();
+        assert_eq!(reloaded.documents()[0], original);
+        reloaded.delete("copy").unwrap();
+        assert_eq!(reloaded.documents(), &[original]);
     }
 
     #[test]

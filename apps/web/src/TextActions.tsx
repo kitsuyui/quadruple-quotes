@@ -4,15 +4,17 @@ import { Icon } from "./Icon";
 export function TextActions({
   title,
   archived,
-  canArchive,
+  saved,
   disabled,
+  onDuplicate,
   onArchive,
   onDelete,
 }: {
   title: string;
   archived: boolean;
-  canArchive: boolean;
+  saved: boolean;
   disabled: boolean;
+  onDuplicate(): void;
   onArchive(): void;
   onDelete(): void;
 }) {
@@ -62,8 +64,20 @@ export function TextActions({
       <div className="text-action-menu">
         <button
           type="button"
-          disabled={disabled || !canArchive}
-          title={canArchive ? undefined : "Save this text before archiving"}
+          disabled={disabled || !saved}
+          title={saved ? undefined : "Save this text before duplicating"}
+          onClick={() => {
+            close();
+            onDuplicate();
+          }}
+        >
+          <Icon name="copy" />
+          Duplicate text
+        </button>
+        <button
+          type="button"
+          disabled={disabled || !saved}
+          title={saved ? undefined : "Save this text before archiving"}
           onClick={() => {
             close();
             onArchive();

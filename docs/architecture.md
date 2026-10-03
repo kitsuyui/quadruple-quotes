@@ -10,7 +10,7 @@ React editor → EditorHost ports → browser adapter → WASM transport → Rus
 
 | Component | Responsibility | Status |
 | --- | --- | --- |
-| `crates/core` | Documents, save/delete rules, validation, versioned snapshots | Implemented |
+| `crates/core` | Documents, save/duplicate/archive/delete rules, validation, versioned snapshots | Implemented |
 | `crates/wasm` | Thin JSON transport to the same core | Implemented |
 | `apps/web` | Editor, sidebar, draft lifecycle, browser storage and clipboard | Implemented |
 | Proofreading plugins | Analysis capabilities and opt-in suggestions | WIP; no implementation |
@@ -33,6 +33,8 @@ The browser stores one snapshot under the stable key `quadruple-quotes.workspace
 A draft stays in React until Save (or Cmd/Ctrl+S). Navigation asks whether to save, discard, or cancel; closing/reloading with edits uses the browser's beforeunload prompt. Deletion requires confirmation naming the target. Each sidebar row has separate open and action controls, so a command targets that row even while another document has unsaved edits.
 
 Archive and restore are core mutations that only change the archive flag, keeping body, title, ID, and edit timestamp intact. The UI filters active/archived lists, and protects unsaved edits before archiving or restoring the current text. A new unsaved draft must be saved before archive is enabled. Archived texts remain editable and deletable. Removing another text does not discard the current draft.
+
+Duplicate is a core mutation that copies a saved text's exact body into a new ID supplied by the host, adds “(copy)” to its title (using “Untitled text” for blank titles), and sets a new host timestamp. The copy is active even when the source is archived. Existing IDs are rejected rather than replaced. The UI opens the persisted copy for editing, asking whether to save, discard, or cancel any current draft first. Saving that draft updates the source before copying if it is the source; discarding copies its last saved contents. A new unsaved text must be saved before duplication is enabled.
 
 The browser adapter creates a candidate core workspace, performs the mutation, persists its snapshot, and only then replaces the active core. Quota/permission failures leave both the saved documents and draft available. Invalid or unsupported snapshots are rejected without clearing storage. Each mutation compares the loaded snapshot with current storage to reject stale tabs. This is a best-effort conflict check, not a transactional multi-writer store; collaborative editing remains out of scope.
 

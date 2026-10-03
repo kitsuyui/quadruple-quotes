@@ -29,6 +29,12 @@ class BrowserTextRepository implements TextRepository {
     this.commit((next) => next.delete(id));
   }
 
+  duplicate(id: string, newId: string, updatedAt: number): TextDocument {
+    return this.commit((next) =>
+      JSON.parse(next.duplicate(id, newId, BigInt(updatedAt))),
+    );
+  }
+
   setArchived(id: string, archived: boolean): void {
     this.commit((next) => next.set_archived(id, archived));
   }
@@ -37,7 +43,7 @@ class BrowserTextRepository implements TextRepository {
     this.core.free();
   }
 
-  private commit(mutate: (next: TextWorkspace) => void): void {
+  private commit<T>(mutate: (next: TextWorkspace) => T): T {
     // Reject stale writers, including another tab, rather than losing its edits.
     if (this.storage.getItem(STORAGE_KEY) !== this.persisted) {
       throw new Error(
@@ -46,12 +52,13 @@ class BrowserTextRepository implements TextRepository {
     }
     const next = new TextWorkspace(this.core.snapshot());
     try {
-      mutate(next);
+      const result = mutate(next);
       const json = next.snapshot();
       this.storage.setItem(STORAGE_KEY, json);
       this.core.free();
       this.core = next;
       this.persisted = json;
+      return result;
     } catch (error) {
       next.free();
       throw error;

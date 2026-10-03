@@ -11,6 +11,7 @@ export interface TextRepository {
   list(): TextDocument[];
   save(document: TextDocument): void;
   delete(id: string): void;
+  duplicate(id: string, newId: string, updatedAt: number): TextDocument;
   setArchived(id: string, archived: boolean): void;
   dispose(): void;
 }
