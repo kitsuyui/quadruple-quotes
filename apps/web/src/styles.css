@@ -147,24 +147,37 @@ button.primary:hover:not(:disabled) {
   margin: 0 -4px;
   padding: 0 4px 20px;
 }
-.text-item {
+.text-row {
+  position: relative;
   display: flex;
-  width: 100%;
-  text-align: left;
-  padding: 15px 11px;
-  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid transparent;
   margin-bottom: 6px;
   border-radius: 9px;
 }
-.text-item.selected {
+.text-row:hover {
+  background: #eaece4;
+}
+.text-row.selected {
   background: #e1e6d9;
   border-color: #d6ddce;
+}
+.text-item {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 14px 0 14px 10px;
+  gap: 10px;
+}
+.text-row .text-item:hover {
+  background: transparent;
 }
 .text-item-icon {
   color: #8f9786;
   padding-top: 2px;
 }
-.text-item.selected .text-item-icon {
+.text-row.selected .text-item-icon {
   color: #5c7051;
 }
 .text-item-content {
@@ -203,6 +216,81 @@ button.primary:hover:not(:disabled) {
 }
 .text-item > .dirty-dot {
   margin-top: 7px;
+}
+.text-actions {
+  flex-shrink: 0;
+  margin: 9px 5px 0 3px;
+}
+.text-actions summary {
+  list-style: none;
+  cursor: pointer;
+  color: #8d9583;
+  border-radius: 5px;
+  padding: 5px 3px;
+  display: flex;
+}
+.text-actions summary::-webkit-details-marker {
+  display: none;
+}
+.text-actions summary:hover,
+.text-actions[open] summary {
+  background: #d9e0cf;
+  color: #405336;
+}
+.text-actions summary:focus-visible {
+  outline: 2px solid #69845e;
+  outline-offset: 2px;
+}
+.text-action-menu {
+  position: absolute;
+  z-index: 3;
+  top: 39px;
+  right: 5px;
+  min-width: 164px;
+  background: #fafbf7;
+  border: 1px solid #dce2d3;
+  border-radius: 8px;
+  padding: 5px;
+  box-shadow: 0 8px 24px #28311b20;
+}
+.text-action-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+}
+.text-action-menu svg {
+  width: 15px;
+  height: 15px;
+}
+.text-action-menu .text-action-delete {
+  color: #a55749;
+}
+.text-action-menu .text-action-delete:hover:not(:disabled) {
+  background: #f5eae4;
+}
+.archive-view {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  padding: 11px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #7b8472;
+}
+.archive-view.active {
+  background: #e3e8dc;
+  color: #465d43;
+}
+.archive-view .count {
+  margin-left: auto;
+}
+.text-list:has(.text-actions[open]) {
+  padding-bottom: 110px;
 }
 .library-empty {
   color: #a0a495;
@@ -558,6 +646,12 @@ button.primary:hover:not(:disabled) {
   line-height: 1.7;
   color: #808773;
   overflow-wrap: anywhere;
+}
+.confirmation .confirmation-error {
+  color: #925749;
+  background: #fcf1e9;
+  padding: 10px;
+  border-radius: 6px;
 }
 .dialog-actions {
   display: flex;

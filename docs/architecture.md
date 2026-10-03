@@ -28,7 +28,11 @@ The React editor depends on `EditorHost`, not the browser adapter. `TextReposito
 
 ## Persistence and drafts
 
-The browser stores one snapshot under `quadruple-quotes.workspace.v1` in localStorage. A draft stays in React until Save (or Cmd/Ctrl+S). Navigation asks whether to save, discard, or cancel; closing/reloading with edits uses the browser's beforeunload prompt. Deletion requires confirmation.
+The browser stores one snapshot under the stable key `quadruple-quotes.workspace.v1` in localStorage. Snapshot version 2 adds an `archived` boolean to each document. The Rust core reads version 1 documents with `archived: false` and exports version 2; legacy storage is only rewritten after a successful mutation. Older builds reject the new version rather than interpreting it as empty data.
+
+A draft stays in React until Save (or Cmd/Ctrl+S). Navigation asks whether to save, discard, or cancel; closing/reloading with edits uses the browser's beforeunload prompt. Deletion requires confirmation naming the target. Each sidebar row has separate open and action controls, so a command targets that row even while another document has unsaved edits.
+
+Archive and restore are core mutations that only change the archive flag, keeping body, title, ID, and edit timestamp intact. The UI filters active/archived lists, and protects unsaved edits before archiving or restoring the current text. A new unsaved draft must be saved before archive is enabled. Archived texts remain editable and deletable. Removing another text does not discard the current draft.
 
 The browser adapter creates a candidate core workspace, performs the mutation, persists its snapshot, and only then replaces the active core. Quota/permission failures leave both the saved documents and draft available. Invalid or unsupported snapshots are rejected without clearing storage. Each mutation compares the loaded snapshot with current storage to reject stale tabs. This is a best-effort conflict check, not a transactional multi-writer store; collaborative editing remains out of scope.
 

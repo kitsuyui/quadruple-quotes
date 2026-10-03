@@ -6,12 +6,16 @@ export function Confirmation({
   onCancel,
   onDiscard,
   onSave,
+  discardChanges = false,
+  error,
 }: {
   kind: "leave" | "delete";
   title: string;
   onCancel(): void;
   onDiscard(): void;
   onSave(): void;
+  discardChanges?: boolean;
+  error?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -37,6 +41,14 @@ export function Confirmation({
           ? "You have unsaved changes. Save them before moving on, or discard this draft."
           : `“${title || "Untitled text"}” will be removed from this workspace. This cannot be undone.`}
       </p>
+      {kind === "delete" && discardChanges && (
+        <p>Unsaved changes to this text will also be discarded.</p>
+      )}
+      {error && (
+        <p className="confirmation-error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="dialog-actions">
         <button type="button" onClick={onCancel}>
           Cancel

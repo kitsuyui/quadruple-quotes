@@ -29,6 +29,10 @@ class BrowserTextRepository implements TextRepository {
     this.commit((next) => next.delete(id));
   }
 
+  setArchived(id: string, archived: boolean): void {
+    this.commit((next) => next.set_archived(id, archived));
+  }
+
   dispose(): void {
     this.core.free();
   }

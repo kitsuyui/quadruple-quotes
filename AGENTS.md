@@ -3,7 +3,7 @@
 ## 方針
 
 - この repository は Rust core と React Web UI を持つテキスト管理ツールです。
-- 実装対象はテキストの作成・編集・コピー・貼り付け・保存・削除に限定します。
+- 実装対象はテキストの作成・編集・コピー・貼り付け・保存・アーカイブ・復元・削除に限定します。
 - 校正プラグイン、LSP、VSCode 拡張、Tauri は WIP です。依頼なしに scaffold や依存を追加しません。
 - 公開されるコードコメント、README、設計文書、commit message、PR は英語で記述します。
 - 他 repository の内部運用、private path、内部 Issue / PR を公開成果物へ含めません。

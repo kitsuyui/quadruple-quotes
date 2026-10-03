@@ -2,9 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Confirmation } from "./Confirmation";
 import { Icon } from "./Icon";
 import type { EditorHost, TextDocument } from "./ports";
+import { TextActions } from "./TextActions";
 
 type Notice = { text: string; error: boolean };
-type Pending = { kind: "leave"; proceed(): void } | { kind: "delete" };
+type Pending =
+  | { kind: "leave"; proceed(): void }
+  | { kind: "delete"; document: TextDocument };
+
+function inView(documents: TextDocument[], archived: boolean) {
+  return documents
+    .filter((document) => document.archived === archived)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
 
 function displayTitle(document: TextDocument) {
   return document.title.trim() || "Untitled text";
@@ -25,15 +34,13 @@ function errorMessage(error: unknown) {
 export function App({ host }: { host: EditorHost }) {
   const [documents, setDocuments] = useState(() => host.repository.list());
   const [draft, setDraft] = useState<TextDocument | null>(
-    () =>
-      [...host.repository.list()].sort(
-        (a, b) => b.updatedAt - a.updatedAt,
-      )[0] ?? null,
+    () => inView(host.repository.list(), false)[0] ?? null,
   );
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const editor = useRef<HTMLTextAreaElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const draftRef = useRef(draft);
@@ -99,9 +106,23 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function newText() {
-    transition(() =>
-      open({ id: host.createId(), title: "", body: "", updatedAt: host.now() }),
-    );
+    transition(() => {
+      setShowArchived(false);
+      open({
+        id: host.createId(),
+        title: "",
+        body: "",
+        updatedAt: host.now(),
+        archived: false,
+      });
+    });
+  }
+
+  function changeView(archived: boolean) {
+    transition(() => {
+      setShowArchived(archived);
+      open(inView(host.repository.list(), archived)[0] ?? null);
+    });
   }
 
   function update(field: "title" | "body", value: string) {
@@ -156,14 +177,15 @@ export function App({ host }: { host: EditorHost }) {
     }
   }
 
-  function remove() {
-    if (!draft) return;
+  function remove(document: TextDocument) {
     try {
-      if (saved) host.repository.delete(draft.id);
+      if (documents.some((item) => item.id === document.id))
+        host.repository.delete(document.id);
       const remaining = host.repository.list();
       setDocuments(remaining);
       setPending(null);
-      open(remaining.at(-1) ?? null);
+      if (draft?.id === document.id)
+        open(inView(remaining, showArchived)[0] ?? null);
       setNotice({ text: "Text deleted.", error: false });
     } catch (error) {
       setPending(null);
@@ -174,7 +196,42 @@ export function App({ host }: { host: EditorHost }) {
     }
   }
 
-  const listed = [...documents].sort((a, b) => b.updatedAt - a.updatedAt);
+  function archive(id: string, archived: boolean) {
+    try {
+      host.repository.setArchived(id, archived);
+      const next = host.repository.list();
+      setDocuments(next);
+      if (draft?.id === id) open(inView(next, showArchived)[0] ?? null);
+      setNotice({
+        text: archived
+          ? "Text archived. Find it in Archived texts."
+          : "Text restored to your texts.",
+        error: false,
+      });
+    } catch (error) {
+      setNotice({
+        text: `Could not ${archived ? "archive" : "restore"}. Your text is still here. ${errorMessage(error)}`,
+        error: true,
+      });
+    }
+  }
+
+  function requestArchive(document: TextDocument) {
+    setNotice(null);
+    const proceed = () => archive(document.id, !document.archived);
+    if (document.id === draft?.id && dirty) transition(proceed);
+    else proceed();
+  }
+
+  function requestDelete(document: TextDocument) {
+    setNotice(null);
+    setPending({ kind: "delete", document });
+  }
+
+  const archivedCount = documents.filter(
+    (document) => document.archived,
+  ).length;
+  const listed = inView(documents, showArchived);
   if (draft && !saved) listed.unshift(draft);
   const characters = draft ? Array.from(draft.body).length : 0;
 
@@ -196,7 +253,10 @@ export function App({ host }: { host: EditorHost }) {
           type="button"
           className="brand"
           onClick={() => {
-            transition(() => open(null));
+            transition(() => {
+              setShowArchived(false);
+              open(null);
+            });
           }}
         >
           <span className="brand-mark" aria-hidden="true">
@@ -213,58 +273,102 @@ export function App({ host }: { host: EditorHost }) {
           onClick={newText}
         >
           <Icon name="plus" />
-          New text<span className="button-hint">↗</span>
+          New text
+          <span className="button-hint" aria-hidden="true">
+            ↗
+          </span>
         </button>
         <div className="library-heading">
-          <span className="eyebrow">YOUR TEXTS</span>
-          <span className="count">{documents.length}</span>
+          <span className="eyebrow">
+            {showArchived ? "ARCHIVED TEXTS" : "YOUR TEXTS"}
+          </span>
+          <span className="count">
+            {showArchived ? archivedCount : documents.length - archivedCount}
+          </span>
         </div>
-        <nav className="text-list" aria-label="Your texts">
+        <nav
+          className="text-list"
+          aria-label={showArchived ? "Archived texts" : "Your texts"}
+        >
           {listed.map((document) => {
             const selected = document.id === draft?.id;
             const visible = selected && draft ? draft : document;
             return (
-              <button
-                type="button"
+              <div
                 key={document.id}
-                className={`text-item ${selected ? "selected" : ""}`}
-                disabled={busy}
-                aria-current={selected ? "page" : undefined}
-                onClick={() => {
-                  if (!selected) transition(() => open(document));
-                  else setSidebarOpen(false);
-                }}
+                className={`text-row ${selected ? "selected" : ""}`}
               >
-                <span className="text-item-icon">
-                  <Icon name="text" />
-                </span>
-                <span className="text-item-content">
-                  <span className="text-item-title">
-                    {displayTitle(visible)}
+                <button
+                  type="button"
+                  className="text-item"
+                  aria-label={`Open ${displayTitle(visible)}`}
+                  disabled={busy}
+                  aria-current={selected ? "page" : undefined}
+                  onClick={() => {
+                    if (!selected) transition(() => open(document));
+                    else setSidebarOpen(false);
+                  }}
+                >
+                  <span className="text-item-icon">
+                    <Icon name={document.archived ? "archive" : "text"} />
                   </span>
-                  <span className="text-item-excerpt">
-                    {visible.body.trim() || "An open space for your words"}
+                  <span className="text-item-content">
+                    <span className="text-item-title">
+                      {displayTitle(visible)}
+                    </span>
+                    <span className="text-item-excerpt">
+                      {visible.body.trim() || "An open space for your words"}
+                    </span>
+                    <span className="text-item-date">
+                      {selected && dirty
+                        ? "Unsaved draft"
+                        : savedDate(document.updatedAt)}
+                    </span>
                   </span>
-                  <span className="text-item-date">
-                    {selected && dirty
-                      ? "Unsaved draft"
-                      : savedDate(document.updatedAt)}
-                  </span>
-                </span>
-                {selected && dirty && (
-                  <span className="dirty-dot" title="Unsaved changes" />
-                )}
-              </button>
+                  {selected && dirty && (
+                    <span className="dirty-dot" title="Unsaved changes" />
+                  )}
+                </button>
+                <TextActions
+                  title={displayTitle(visible)}
+                  archived={document.archived}
+                  canArchive={documents.some((item) => item.id === document.id)}
+                  disabled={busy}
+                  onArchive={() => requestArchive(document)}
+                  onDelete={() => requestDelete(visible)}
+                />
+              </div>
             );
           })}
           {!listed.length && (
             <div className="library-empty">
               <Icon name="text" />
-              <p>Your texts will live here.</p>
-              <span>A thought, a draft, a little of anything.</span>
+              <p>
+                {showArchived
+                  ? "No archived texts yet."
+                  : "Your texts will live here."}
+              </p>
+              <span>
+                {showArchived
+                  ? "Finished for now. Kept for later."
+                  : "A thought, a draft, a little of anything."}
+              </span>
             </div>
           )}
         </nav>
+        <button
+          type="button"
+          className={`archive-view ${showArchived ? "active" : ""}`}
+          aria-label={showArchived ? "Back to texts" : "Archived texts"}
+          disabled={busy}
+          onClick={() => changeView(!showArchived)}
+        >
+          <Icon name={showArchived ? "text" : "archive"} />
+          {showArchived ? "Back to texts" : "Archived texts"}
+          <span className="count">
+            {showArchived ? documents.length - archivedCount : archivedCount}
+          </span>
+        </button>
         <div className="sidebar-footer">
           <span className="workspace-avatar">qq</span>
           <div>
@@ -288,7 +392,7 @@ export function App({ host }: { host: EditorHost }) {
             </button>
             <span>Workspace</span>
             <span className="breadcrumb-slash">/</span>
-            <strong>Texts</strong>
+            <strong>{showArchived ? "Archive" : "Texts"}</strong>
           </div>
           <span className="local-badge">
             <span className="local-dot" />
@@ -345,7 +449,7 @@ export function App({ host }: { host: EditorHost }) {
             <div className="editor-page">
               <div className="page-kicker">
                 <span className="eyebrow">
-                  TEXT{" "}
+                  {draft.archived ? "ARCHIVED TEXT" : "TEXT"}{" "}
                   {String(
                     Math.max(
                       1,
@@ -393,7 +497,7 @@ export function App({ host }: { host: EditorHost }) {
               <button
                 type="button"
                 className="delete-button"
-                onClick={() => setPending({ kind: "delete" })}
+                onClick={() => requestDelete(draft)}
                 disabled={busy}
               >
                 <Icon name="trash" />
@@ -409,18 +513,41 @@ export function App({ host }: { host: EditorHost }) {
               <div className="art-line" />
               <div className="art-line short" />
             </div>
-            <span className="eyebrow">ROOM FOR YOUR WORDS</span>
-            <h1>A thought starts here.</h1>
+            <span className="eyebrow">
+              {showArchived ? "KEPT FOR LATER" : "ROOM FOR YOUR WORDS"}
+            </span>
+            <h1>
+              {showArchived
+                ? "A home for finished thoughts."
+                : "A thought starts here."}
+            </h1>
             <p>
-              Collect your notes, drafts, and fragments.
-              <br />A quiet place to write, one text at a time.
+              {showArchived ? (
+                <>
+                  Archive a text from its sidebar menu.
+                  <br />
+                  It stays here until you need it again.
+                </>
+              ) : (
+                <>
+                  Collect your notes, drafts, and fragments.
+                  <br />A quiet place to write, one text at a time.
+                </>
+              )}
             </p>
             <button
               type="button"
               className="primary start-button"
-              onClick={newText}
+              onClick={() => {
+                if (showArchived) changeView(false);
+                else newText();
+              }}
             >
-              Create your first text
+              {showArchived
+                ? "Back to texts"
+                : documents.length
+                  ? "Create a text"
+                  : "Create your first text"}
               <Icon name="arrow" />
             </button>
             <div className="empty-note">
@@ -430,19 +557,27 @@ export function App({ host }: { host: EditorHost }) {
         )}
         <div
           className={`notice ${notice?.error ? "notice-error" : ""}`}
-          role={notice?.error ? "alert" : "status"}
+          role={notice?.error && !pending ? "alert" : "status"}
           aria-live="polite"
         >
-          {notice?.text}
+          {pending ? null : notice?.text}
         </div>
       </main>
       {pending && (
         <Confirmation
           kind={pending.kind}
-          title={draft ? displayTitle(draft) : ""}
+          title={
+            pending.kind === "delete" ? displayTitle(pending.document) : ""
+          }
+          discardChanges={
+            pending.kind === "delete" &&
+            pending.document.id === draft?.id &&
+            dirty
+          }
+          error={notice?.error ? notice.text : undefined}
           onCancel={() => setPending(null)}
           onDiscard={() => {
-            if (pending.kind === "delete") remove();
+            if (pending.kind === "delete") remove(pending.document);
             else {
               pending.proceed();
               setPending(null);

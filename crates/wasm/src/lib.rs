@@ -30,6 +30,10 @@ impl TextWorkspace {
     pub fn delete(&mut self, id: &str) -> Result<(), JsValue> {
         self.inner.delete(id).map_err(js_error)
     }
+
+    pub fn set_archived(&mut self, id: &str, archived: bool) -> Result<(), JsValue> {
+        self.inner.set_archived(id, archived).map_err(js_error)
+    }
 }
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {

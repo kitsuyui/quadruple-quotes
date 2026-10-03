@@ -8,6 +8,9 @@ export type IconName =
   | "check"
   | "arrow"
   | "menu"
+  | "more"
+  | "archive"
+  | "restore"
   | "close";
 
 const paths: Record<IconName, string> = {
@@ -20,6 +23,9 @@ const paths: Record<IconName, string> = {
   check: "M5 12l4 4L19 6",
   arrow: "M5 12h14M13 6l6 6-6 6",
   menu: "M4 6h16M4 12h16M4 18h16",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  archive: "M3 4h18v4H3zM5 8v12h14V8M10 12h4",
+  restore: "M4 9h8M4 9V2M4 9a8 8 0 1 1-1 7",
   close: "M6 6l12 12M6 18L18 6",
 };
 
@@ -31,7 +37,7 @@ export function Icon({ name }: { name: IconName }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth={name === "more" ? "2.8" : "1.6"}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
