@@ -34,10 +34,10 @@ This checks Rust formatting, Clippy, native core tests, Biome, TypeScript, the p
 
 For a production preview, run `just build` followed by `bun run preview`. The static output is in `apps/web/dist`.
 
-## Boundaries and WIP
+## Boundaries and proofreading
 
 - `crates/core`: platform-independent document operations and versioned snapshots.
 - `crates/wasm`: thin browser transport to that core.
-- `apps/web`: React UI and replaceable host ports for persistence, clipboard, IDs, and time.
+- `apps/web`: React UI, browser hosts, and bundled opt-in proofreading adapters.
 
-Proofreading plugins, LSP, a VSCode extension, and a dedicated desktop/Tauri UI remain **WIP** with no implementation or placeholder controls. See [the architecture](docs/architecture.md) for their intended integration boundaries.
+The Proofreading panel runs the Rust analysis adapter and bundled Markdown and textlint rules locally in a worker. It labels analysis counts as grapheme clusters and the editor footer's code-point count as Unicode scalars. Optional Japanese dependency analysis contacts a locally configured parser only after an explicit manual request. LSP, a VSCode extension, and a dedicated desktop/Tauri UI remain WIP. See [the architecture](docs/architecture.md) for the integration boundaries.

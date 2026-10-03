@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  AnalysisResult,
+  AnalysisSettings,
+  PluginDescriptor,
+} from "../../../packages/analysis/src/types";
+import {
+  resetAnalysisSettings,
+  safelyLoadAnalysisSettings,
+  saveAnalysisSettings,
+} from "./analysis-settings";
 import { Confirmation } from "./Confirmation";
 import { Icon } from "./Icon";
+import { ProofreadingPanel } from "./ProofreadingPanel";
 import type { EditorHost, TextDocument } from "./ports";
 import { TextActions } from "./TextActions";
 
@@ -41,10 +52,33 @@ export function App({ host }: { host: EditorHost }) {
   const [busy, setBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [proofreadingOpen, setProofreadingOpen] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(
+    null,
+  );
+  const [catalog, setCatalog] = useState<PluginDescriptor[]>([]);
+  const [revision, setRevision] = useState(0);
+  const [composing, setComposing] = useState(false);
+  const [format, setFormat] = useState<"text" | "markdown">("text");
+  const [manualAnalysis, setManualAnalysis] = useState(false);
+  const [initialAnalysisSettings] = useState(() =>
+    safelyLoadAnalysisSettings(window.localStorage),
+  );
+  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings>(
+    initialAnalysisSettings.settings,
+  );
+  const [analysisError, setAnalysisError] = useState(
+    initialAnalysisSettings.error,
+  );
+  const analysisSettingsRaw = useRef(
+    window.localStorage.getItem("quadruple-quotes.proofreading-settings.v1"),
+  );
   const editor = useRef<HTMLTextAreaElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const draftRef = useRef(draft);
+  const revisionRef = useRef(revision);
   draftRef.current = draft;
+  revisionRef.current = revision;
   const saved = documents.find((item) => item.id === draft?.id);
   const dirty =
     draft !== null &&
@@ -88,6 +122,62 @@ export function App({ host }: { host: EditorHost }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [dirty, pending, busy, save]);
 
+  useEffect(() => {
+    if (!proofreadingOpen || analysisError) return;
+    void host.analysis
+      .catalog()
+      .then(setCatalog)
+      .catch((error: unknown) => setAnalysisError(errorMessage(error)));
+    return () => host.analysis.dispose();
+  }, [host, proofreadingOpen, analysisError]);
+
+  useEffect(() => {
+    if (!proofreadingOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProofreadingOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [proofreadingOpen]);
+
+  useEffect(() => {
+    if (!draft || composing || !proofreadingOpen || analysisError) return;
+    const documentId = draft.id;
+    const expectedRevision = revision;
+    const timer = window.setTimeout(() => {
+      void host.analysis
+        .analyze({
+          documentId,
+          revision: expectedRevision,
+          text: draft.body,
+          format,
+          settings: analysisSettings,
+          manual: manualAnalysis,
+        })
+        .then((result) => {
+          if (
+            draftRef.current?.id === documentId &&
+            revisionRef.current === expectedRevision &&
+            result.documentId === documentId &&
+            result.revision === expectedRevision
+          )
+            setAnalysisResult(result);
+        })
+        .catch(() => undefined);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [
+    draft,
+    composing,
+    proofreadingOpen,
+    revision,
+    format,
+    host,
+    analysisSettings,
+    manualAnalysis,
+    analysisError,
+  ]);
+
   // Focus only on selection changes; typing must preserve caret and IME state.
   const draftId = draft?.id;
   useEffect(() => {
@@ -101,6 +191,8 @@ export function App({ host }: { host: EditorHost }) {
 
   function open(document: TextDocument | null) {
     setDraft(document);
+    setRevision((current) => current + 1);
+    setAnalysisResult(null);
     setNotice(null);
     setSidebarOpen(false);
   }
@@ -127,6 +219,11 @@ export function App({ host }: { host: EditorHost }) {
 
   function update(field: "title" | "body", value: string) {
     setDraft((current) => (current ? { ...current, [field]: value } : null));
+    if (field === "body") {
+      revisionRef.current += 1;
+      setRevision(revisionRef.current);
+      setAnalysisResult(null);
+    }
     setNotice(null);
   }
 
@@ -256,7 +353,7 @@ export function App({ host }: { host: EditorHost }) {
   ).length;
   const listed = inView(documents, showArchived);
   if (draft && !saved) listed.unshift(draft);
-  const characters = draft ? Array.from(draft.body).length : 0;
+  const unicodeScalars = draft ? Array.from(draft.body).length : 0;
 
   return (
     <div className="workspace">
@@ -442,6 +539,13 @@ export function App({ host }: { host: EditorHost }) {
               <div className="toolbar-actions">
                 <button
                   type="button"
+                  aria-pressed={proofreadingOpen}
+                  onClick={() => setProofreadingOpen((open) => !open)}
+                >
+                  Proofreading
+                </button>
+                <button
+                  type="button"
                   aria-label="Copy"
                   onClick={copy}
                   disabled={busy || !draft.body}
@@ -499,6 +603,20 @@ export function App({ host }: { host: EditorHost }) {
               <div className="editor-hint">
                 A space to think. Make it yours.
               </div>
+              <div className="format-control">
+                <label htmlFor="text-format">Format</label>
+                <select
+                  id="text-format"
+                  value={format}
+                  onChange={(event) => {
+                    setFormat(event.target.value as "text" | "markdown");
+                    setRevision((current) => current + 1);
+                  }}
+                >
+                  <option value="text">Plain text</option>
+                  <option value="markdown">Markdown</option>
+                </select>
+              </div>
               <label className="sr-only" htmlFor="text-body">
                 Text body
               </label>
@@ -509,13 +627,24 @@ export function App({ host }: { host: EditorHost }) {
                 value={draft.body}
                 placeholder="Start writing, or paste something you’d like to keep…"
                 onChange={(event) => update("body", event.target.value)}
+                onCompositionStart={() => {
+                  setComposing(true);
+                  revisionRef.current += 1;
+                  setRevision(revisionRef.current);
+                  setAnalysisResult(null);
+                }}
+                onCompositionEnd={() => {
+                  setComposing(false);
+                  revisionRef.current += 1;
+                  setRevision(revisionRef.current);
+                }}
                 disabled={busy}
                 spellCheck={false}
               />
             </div>
             <footer className="editor-footer">
               <span>
-                {characters.toLocaleString()} characters
+                {unicodeScalars.toLocaleString()} Unicode scalars
                 <span className="footer-dot">·</span>Plain text
               </span>
               <button
@@ -587,6 +716,62 @@ export function App({ host }: { host: EditorHost }) {
           {pending ? null : notice?.text}
         </div>
       </main>
+      <ProofreadingPanel
+        open={proofreadingOpen}
+        result={analysisResult}
+        catalog={catalog}
+        onClose={() => setProofreadingOpen(false)}
+        onSelect={(start, end) => {
+          if (!editor.current || composing) return;
+          editor.current.focus();
+          editor.current.setSelectionRange(start, end);
+        }}
+        settings={analysisSettings}
+        onSettings={(settings) => {
+          try {
+            analysisSettingsRaw.current = saveAnalysisSettings(
+              window.localStorage,
+              settings,
+              analysisSettingsRaw.current,
+            );
+            setAnalysisSettings(settings);
+            setAnalysisError(null);
+            setRevision((current) => current + 1);
+          } catch (error) {
+            setAnalysisError(errorMessage(error));
+          }
+        }}
+        onDependencies={() => {
+          setManualAnalysis(true);
+          setRevision((current) => current + 1);
+        }}
+      />
+      {analysisError && (
+        <div className="notice notice-error" role="alert">
+          Proofreading is disabled: {analysisError}{" "}
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                const settings = resetAnalysisSettings(
+                  window.localStorage,
+                  analysisSettingsRaw.current,
+                );
+                analysisSettingsRaw.current = window.localStorage.getItem(
+                  "quadruple-quotes.proofreading-settings.v1",
+                );
+                setAnalysisSettings(settings);
+                setAnalysisError(null);
+                setRevision((current) => current + 1);
+              } catch (error) {
+                setAnalysisError(errorMessage(error));
+              }
+            }}
+          >
+            Reset proofreading settings
+          </button>
+        </div>
+      )}
       {pending && (
         <Confirmation
           kind={pending.kind}

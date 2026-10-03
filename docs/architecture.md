@@ -1,6 +1,6 @@
 # Architecture
 
-Quadruple Quotes is a text management and proofreading tool. The first stage implements plain-text management only. All components live in this repository.
+Quadruple Quotes is a text management and proofreading tool. It provides local document management and opt-in proofreading. All components live in this repository.
 
 ```text
 React editor → EditorHost ports → browser adapter → WASM transport → Rust core
@@ -12,8 +12,8 @@ React editor → EditorHost ports → browser adapter → WASM transport → Rus
 | --- | --- | --- |
 | `crates/core` | Documents, save/duplicate/archive/delete rules, validation, versioned snapshots | Implemented |
 | `crates/wasm` | Thin JSON transport to the same core | Implemented |
-| `apps/web` | Editor, sidebar, draft lifecycle, browser storage and clipboard | Implemented |
-| Proofreading plugins | Analysis capabilities and opt-in suggestions | WIP; no implementation |
+| `apps/web` | Editor, sidebar, draft lifecycle, browser storage, clipboard, and analysis worker | Implemented |
+| Proofreading plugins | Rust analysis, bundled Markdown/textlint rules, and opt-in local dependency analysis | Implemented |
 | LSP | Native core adapter for document synchronization and diagnostics | WIP; no implementation |
 | VSCode extension | LSP client and editor integration | WIP; no implementation |
 | Desktop | Reuse the React editor with a Tauri host adapter | WIP; no implementation |
@@ -40,11 +40,11 @@ The browser adapter creates a candidate core workspace, performs the mutation, p
 
 Saving is local to the current browser profile and origin. It is not a file download or cloud backup; clearing browser data removes stored texts. Clipboard buttons require browser permission and a secure context (including localhost). Native copy/paste shortcuts remain available in the textarea.
 
-## Future plugin boundary (WIP)
+## Proofreading boundary
 
-Separate analysis, storage, transport, and UI contributions instead of a single global plugin object. An analysis plugin should receive an immutable document/revision and return diagnostics or proposed edits; the host should decide when to apply them. Explicit capability registration and versioned interfaces should precede any runtime loading mechanism. Do not introduce dynamic library loading, a plugin registry, or placeholder actions before a concrete plugin is needed.
+Separate analysis, storage, transport, and UI contributions instead of a single global plugin object. The analysis worker receives an immutable document/revision and returns diagnostics or proposed edits; the host decides when to apply them. Its trusted adapter catalog contains only bundled modules, loaded only when enabled. It does not load user-provided code or a remote plugin registry.
 
-LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports. These boundaries leave room for the next stages without implementing them in this stage.
+LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports.
 
 ## Reference patterns
 
