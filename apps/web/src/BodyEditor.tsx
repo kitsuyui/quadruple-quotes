@@ -8,7 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
-import type { Diagnostic } from "../../../packages/analysis/src/types";
+import type {
+  Diagnostic,
+  DiagnosticFix,
+  Range,
+} from "../../../packages/analysis/src/types";
+import type { BodyEdit } from "./body-history";
 import { DiagnosticTooltip } from "./DiagnosticTooltip";
 import {
   type DiagnosticSegment,
@@ -37,6 +42,8 @@ export function BodyEditor({
   onChange,
   onCompositionStart,
   onCompositionEnd,
+  onApply,
+  selectionRequest,
 }: {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string;
@@ -44,9 +51,11 @@ export function BodyEditor({
   pending: boolean;
   composing: boolean;
   disabled: boolean;
-  onChange(value: string): void;
-  onCompositionStart(): void;
-  onCompositionEnd(): void;
+  onChange(value: string, edit: BodyEdit): void;
+  onCompositionStart(selection: Range): void;
+  onCompositionEnd(value: string, selection: Range): void;
+  onApply(diagnostic: Diagnostic, fix: DiagnosticFix): void;
+  selectionRequest: Range | null;
 }) {
   const mirror = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -58,6 +67,8 @@ export function BodyEditor({
   const hitMap = useRef<HitMap | null>(null);
   const leaveTimer = useRef<number | undefined>(undefined);
   const selectionFrame = useRef<number | undefined>(undefined);
+  const beforeInput = useRef<Range>({ start: 0, end: 0 });
+  const appliedSelection = useRef<Range | null>(null);
   const segments = useMemo(
     () => diagnosticSegments(value, diagnostics),
     [value, diagnostics],
@@ -76,8 +87,11 @@ export function BodyEditor({
   }, [cancelLeave]);
   const leave = useCallback(() => {
     cancelLeave();
-    leaveTimer.current = window.setTimeout(() => setActive(null), 180);
-  }, [cancelLeave]);
+    leaveTimer.current = window.setTimeout(() => {
+      if (!document.getElementById(tooltipId)?.contains(document.activeElement))
+        setActive(null);
+    }, 180);
+  }, [cancelLeave, tooltipId]);
 
   function geometry() {
     if (!diagnostics.length) return null;
@@ -146,6 +160,11 @@ export function BodyEditor({
   function selectIssue() {
     if (composing) return;
     const input = inputRef.current;
+    if (input)
+      beforeInput.current = {
+        start: input.selectionStart,
+        end: input.selectionEnd,
+      };
     const previous = dismissed.current;
     if (
       input &&
@@ -212,6 +231,8 @@ export function BodyEditor({
       dismissed.current = activeRef.current?.segment ?? null;
       cancelLeave();
       setActive(null);
+      if (document.getElementById(tooltipId)?.contains(document.activeElement))
+        inputRef.current?.focus();
     };
     const onScroll = (event: Event) => {
       if (
@@ -233,7 +254,39 @@ export function BodyEditor({
       cancelLeave();
       window.cancelAnimationFrame(selectionFrame.current ?? 0);
     };
-  }, [cancelLeave, invalidate]);
+  }, [cancelLeave, invalidate, inputRef, tooltipId]);
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (
+      !input ||
+      !selectionRequest ||
+      appliedSelection.current === selectionRequest
+    )
+      return;
+    appliedSelection.current = selectionRequest;
+    input.focus();
+    input.setSelectionRange(selectionRequest.start, selectionRequest.end);
+    beforeInput.current = selectionRequest;
+    const mark = Array.from(
+      content.current?.querySelectorAll<HTMLElement>(".inline-diagnostic") ??
+        [],
+    ).find(
+      (element) =>
+        Number(element.dataset.start) <= selectionRequest.start &&
+        Number(element.dataset.end) >= selectionRequest.start,
+    );
+    if (mark) {
+      const box = mark.getBoundingClientRect();
+      const viewport = input.getBoundingClientRect();
+      if (box.top < viewport.top || box.bottom > viewport.bottom)
+        input.scrollTop += box.top - viewport.top - input.clientHeight / 2;
+      if (content.current)
+        content.current.style.transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`;
+    }
+    invalidate();
+    selectIssue();
+  });
 
   useLayoutEffect(() => {
     const input = inputRef.current;
@@ -274,11 +327,46 @@ export function BodyEditor({
         ref={inputRef}
         className="body-input body-text"
         aria-describedby={`inline-proofreading-summary${target ? ` ${tooltipId}` : ""}`}
+        aria-controls={target ? tooltipId : undefined}
         value={value}
         placeholder="Start writing, or paste something you’d like to keep…"
         onChange={(event) => {
           invalidate();
-          onChange(event.target.value);
+          const after = {
+            start: event.target.selectionStart,
+            end: event.target.selectionEnd,
+          };
+          onChange(event.target.value, {
+            before: beforeInput.current,
+            after,
+            kind:
+              (event.nativeEvent as InputEvent).inputType === "insertFromPaste"
+                ? "paste"
+                : "typing",
+          });
+          beforeInput.current = after;
+        }}
+        onBeforeInput={(event) => {
+          beforeInput.current = {
+            start: event.currentTarget.selectionStart,
+            end: event.currentTarget.selectionEnd,
+          };
+        }}
+        onKeyDown={(event) => {
+          if (
+            (event.ctrlKey || event.metaKey) &&
+            event.key === "." &&
+            !composing
+          ) {
+            const button = document
+              .getElementById(tooltipId)
+              ?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+            if (button) {
+              event.preventDefault();
+              cancelLeave();
+              button.focus({ preventScroll: true });
+            }
+          }
         }}
         onScroll={syncScroll}
         onPointerMove={(event) => {
@@ -303,9 +391,19 @@ export function BodyEditor({
         onBlur={leave}
         onCompositionStart={() => {
           invalidate();
-          onCompositionStart();
+          const input = inputRef.current;
+          if (input)
+            onCompositionStart({
+              start: input.selectionStart,
+              end: input.selectionEnd,
+            });
         }}
-        onCompositionEnd={onCompositionEnd}
+        onCompositionEnd={(event) =>
+          onCompositionEnd(event.currentTarget.value, {
+            start: event.currentTarget.selectionStart,
+            end: event.currentTarget.selectionEnd,
+          })
+        }
         disabled={disabled}
         spellCheck={false}
       />
@@ -314,9 +412,11 @@ export function BodyEditor({
           id={tooltipId}
           diagnostics={issues}
           pending={pending}
+          disabled={disabled || composing}
           anchor={target.rect}
           onEnter={cancelLeave}
           onLeave={leave}
+          onApply={onApply}
         />
       )}
     </div>

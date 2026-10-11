@@ -31,7 +31,7 @@ test("hover explains each typo and its suggestion without focusing or modifying 
     localStorage.getItem("quadruple-quotes.workspace.v1"),
   );
   const body = page.getByLabel("Text body", { exact: true });
-  const tooltip = page.getByRole("tooltip");
+  const tooltip = page.getByRole("dialog", { name: "Proofreading details" });
   await pointAtMark(page, "teh");
   await expect(tooltip).toContainText("Possible typo: teh");
   await expect(tooltip).toContainText("Suggested: the");
@@ -69,7 +69,7 @@ test("the caret provides keyboard access and Esc dismisses without losing select
   await body.focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowRight");
-  const tooltip = page.getByRole("tooltip");
+  const tooltip = page.getByRole("dialog", { name: "Proofreading details" });
   await expect(tooltip).toContainText("Possible typo: teh");
   const id = await tooltip.getAttribute("id");
   expect(await body.getAttribute("aria-describedby")).toContain(id);
@@ -94,7 +94,7 @@ test("composition and document changes immediately remove stale messages", async
 }) => {
   await createText(page, "A teh typo.");
   await pointAtMark(page, "teh");
-  const tooltip = page.getByRole("tooltip");
+  const tooltip = page.getByRole("dialog", { name: "Proofreading details" });
   await expect(tooltip).toBeVisible();
   const body = page.getByLabel("Text body", { exact: true });
   await body.dispatchEvent("compositionstart", { bubbles: true });
@@ -119,7 +119,7 @@ test("scrolling invalidates old hit boxes and the next hover follows the visible
       input.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
   await pointAtMark(page, "teh");
-  const tooltip = page.getByRole("tooltip");
+  const tooltip = page.getByRole("dialog", { name: "Proofreading details" });
   await expect(tooltip).toContainText("Possible typo: teh");
   await page
     .getByLabel("Text body", { exact: true })
@@ -153,10 +153,12 @@ test("overlapping diagnostics on a composed Japanese character show both message
   const box = await first.boundingBox();
   if (!box) throw new Error("Missing Japanese mark");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page.getByRole("tooltip")).toContainText(
-    "Zero-width character may be hard to review",
-  );
-  await expect(page.getByRole("tooltip").locator("li")).toHaveCount(2);
+  await expect(
+    page.getByRole("dialog", { name: "Proofreading details" }),
+  ).toContainText("Zero-width character may be hard to review");
+  await expect(
+    page.getByRole("dialog", { name: "Proofreading details" }).locator("li"),
+  ).toHaveCount(2);
 });
 
 test.describe("touch access", () => {
@@ -172,7 +174,7 @@ test.describe("touch access", () => {
     const box = await page.locator(".inline-diagnostic").boundingBox();
     if (!box) throw new Error("Missing touch mark");
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
-    const tooltip = page.getByRole("tooltip");
+    const tooltip = page.getByRole("dialog", { name: "Proofreading details" });
     await expect(tooltip).toContainText("Possible typo: teh");
     const card = await tooltip.boundingBox();
     if (!card) throw new Error("Missing mobile tooltip");

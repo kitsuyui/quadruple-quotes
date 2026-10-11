@@ -20,7 +20,7 @@ React editor → EditorHost ports → browser adapter → WASM transport → Rus
 
 ## Dependency direction
 
-The core depends only on serialization libraries. It accepts document IDs and timestamps from its host, holds documents in memory, and reads/writes a versioned JSON snapshot. It has no IO or platform clock. A native LSP or desktop host can use this crate without WebAssembly or React.
+The core accepts document IDs and timestamps from its host, holds documents in memory, and reads/writes a versioned JSON snapshot. Its analysis uses Unicode and spelling libraries, with no IO or platform clock. A native LSP or desktop host can use this crate without WebAssembly or React.
 
 The WASM crate translates errors and JSON across the browser boundary. It delegates mutations and snapshot validation to the core. No text management behavior is implemented a second time in TypeScript.
 
@@ -48,7 +48,7 @@ Realtime analysis follows the current draft independently of the Proofreading pa
 
 `BodyEditor` retains a native textarea for editing, clipboard shortcuts, selection, and IME. An aria-hidden, noninteractive mirror renders only wavy decorations, sharing typography, padding, wrapping, width, and scroll offsets with the textarea. Display ranges expand to whole graphemes and provide nearby anchors for invisible or insertion diagnostics; original UTF-16 ranges remain unchanged for panel selection and future host adapters. Overlapping ranges render the strongest severity without duplicating text. No mirror text is rendered when there are no diagnostics or input exceeds the analysis limit; display work is capped at 200 diagnostics. The footer provides a keyboard-accessible path to messages and rule controls.
 
-Each display segment retains the indices of all diagnostics covering it. Adjacent segments merge only when their severity and diagnostic membership match, so hover messages stay attached to their own ranges. The textarea performs pointer hit testing against cached, visible mirror rectangles; font changes, resizing, scrolling, and new segments invalidate that cache. Keyboard selection and touch expose the same messages through an aria-described tooltip. Its card stays inside the viewport, remains hoverable, and supports Escape dismissal. It cannot mutate documents or apply suggestions.
+Each display segment retains the indices of all diagnostics covering it. Adjacent segments merge only when their severity and diagnostic membership match, so hover messages stay attached to their own ranges. The textarea performs pointer hit testing against cached, visible mirror rectangles; font changes, resizing, scrolling, and new segments invalidate that cache. Keyboard selection and touch expose the same messages through an aria-described nonmodal details dialog. Its card stays inside the viewport, remains hoverable, and supports Escape dismissal. Fix buttons apply only explicit, validated edits to the current draft. Provisional diagnostics cannot apply fixes. Body history and navigation remain editor-host concerns; see [fixes and navigation](proofreading-roadmap.md#applying-fixes-and-navigating-issues) for their contracts.
 
 LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports.
 

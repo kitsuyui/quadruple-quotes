@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  adjacentDiagnostic,
+  diagnosticKey,
+} from "../../../packages/analysis/src/diagnostic-navigation";
 import { trackDiagnostics } from "../../../packages/analysis/src/diagnostic-tracking";
+import { applyDiagnosticFix } from "../../../packages/analysis/src/fixes";
 import type {
   AnalysisResult,
   AnalysisSettings,
   Diagnostic,
+  DiagnosticFix,
   PluginDescriptor,
+  Range,
 } from "../../../packages/analysis/src/types";
 import {
   resetAnalysisSettings,
@@ -12,6 +19,7 @@ import {
   saveAnalysisSettings,
 } from "./analysis-settings";
 import { BodyEditor } from "./BodyEditor";
+import { type BodyEdit, BodyHistory } from "./body-history";
 import { Confirmation } from "./Confirmation";
 import { Icon } from "./Icon";
 import { ProofreadingPanel } from "./ProofreadingPanel";
@@ -70,6 +78,11 @@ export function App({ host }: { host: EditorHost }) {
     useState<DiagnosticDisplay | null>(null);
   const [revision, setRevision] = useState(0);
   const [composing, setComposing] = useState(false);
+  const [bodyHistory] = useState(() => new BodyHistory());
+  const composition = useRef<{ text: string; selection: Range } | null>(null);
+  const [selectionRequest, setSelectionRequest] = useState<Range | null>(null);
+  const selectedIssue = useRef<string | null>(null);
+  const [issueAnnouncement, setIssueAnnouncement] = useState("");
   const [format, setFormat] = useState<"text" | "markdown">("text");
   const [manualAnalysis, setManualAnalysis] = useState(false);
   const [initialAnalysisSettings] = useState(() =>
@@ -88,8 +101,10 @@ export function App({ host }: { host: EditorHost }) {
   const titleInput = useRef<HTMLInputElement>(null);
   const draftRef = useRef(draft);
   const revisionRef = useRef(revision);
+  const analysisRef = useRef(analysisResult);
   draftRef.current = draft;
   revisionRef.current = revision;
+  analysisRef.current = analysisResult;
   const saved = documents.find((item) => item.id === draft?.id);
   const dirty =
     draft !== null &&
@@ -224,6 +239,12 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function open(document: TextDocument | null) {
+    bodyHistory.clear();
+    composition.current = null;
+    setComposing(false);
+    setSelectionRequest(null);
+    selectedIssue.current = null;
+    setIssueAnnouncement("");
     draftRef.current = document;
     setDraft(document);
     advanceRevision();
@@ -253,14 +274,17 @@ export function App({ host }: { host: EditorHost }) {
     });
   }
 
-  function update(field: "title" | "body", value: string) {
+  function update(field: "title" | "body", value: string, edit?: BodyEdit) {
     const current = draftRef.current;
     if (!current || current[field] === value) return;
+    if (field === "body" && edit && !composition.current)
+      bodyHistory.record(current.body, value, edit);
     draftRef.current = { ...current, [field]: value };
     setDraft(draftRef.current);
     if (field === "body") {
       const previousRevision = revisionRef.current;
       const nextRevision = advanceRevision();
+      setIssueAnnouncement("");
       setDiagnosticDisplay((display) =>
         display?.documentId === current.id &&
         display.revision === previousRevision
@@ -325,6 +349,11 @@ export function App({ host }: { host: EditorHost }) {
       update(
         "body",
         current.body.slice(0, start) + text + current.body.slice(end),
+        {
+          before: { start, end },
+          after: { start: start + text.length, end: start + text.length },
+          kind: "paste",
+        },
       );
       requestAnimationFrame(() => {
         editor.current?.focus();
@@ -438,6 +467,125 @@ export function App({ host }: { host: EditorHost }) {
     diagnosticDisplay.revision === revision
       ? diagnosticDisplay.diagnostics
       : [];
+
+  function selectRange(range: Range, diagnostic?: Diagnostic) {
+    const current = draftRef.current;
+    if (
+      !current ||
+      composition.current ||
+      busy ||
+      pending ||
+      range.start < 0 ||
+      range.end > current.body.length
+    )
+      return;
+    selectedIssue.current = diagnostic ? diagnosticKey(diagnostic) : null;
+    setSelectionRequest({ ...range });
+    if (diagnostic) setIssueAnnouncement(diagnostic.message);
+  }
+
+  function applyFix(diagnostic: Diagnostic, fix: DiagnosticFix) {
+    const current = draftRef.current;
+    const result = analysisRef.current;
+    if (
+      !current ||
+      !result ||
+      composition.current ||
+      busy ||
+      pending ||
+      analysisError ||
+      !result.diagnostics.includes(diagnostic) ||
+      !diagnostic.fixes?.includes(fix)
+    )
+      return;
+    const applied = applyDiagnosticFix(
+      {
+        documentId: current.id,
+        revision: revisionRef.current,
+        text: current.body,
+      },
+      result,
+      fix,
+    );
+    if (!applied) {
+      setNotice({
+        text: "This fix is no longer current. Wait for proofreading to finish.",
+        error: true,
+      });
+      return;
+    }
+    const input = editor.current;
+    update("body", applied.text, {
+      before: input
+        ? { start: input.selectionStart, end: input.selectionEnd }
+        : diagnostic.range,
+      after: applied.selection,
+      kind: "fix",
+    });
+    selectRange(applied.selection);
+    setNotice({
+      text: "Fix applied to your draft. Undo to restore it; Save to keep it.",
+      error: false,
+    });
+  }
+
+  function moveHistory(redo: boolean) {
+    const current = draftRef.current;
+    if (!current || composition.current || busy || pending) return;
+    const change = redo
+      ? bodyHistory.redo(current.body)
+      : bodyHistory.undo(current.body);
+    if (!change) return;
+    update("body", change.text);
+    selectRange(change.selection);
+  }
+
+  function navigateIssue(direction: 1 | -1) {
+    const input = editor.current;
+    if (!input || composition.current || busy || pending) return;
+    const diagnostic = adjacentDiagnostic(
+      displayedDiagnostics,
+      { start: input.selectionStart, end: input.selectionEnd },
+      direction,
+      selectedIssue.current,
+    );
+    if (diagnostic) selectRange(diagnostic.range, diagnostic);
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        !draftRef.current ||
+        pending ||
+        busy ||
+        composition.current ||
+        event.isComposing ||
+        event.keyCode === 229
+      )
+        return;
+      if (
+        event.key === "F8" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        event.preventDefault();
+        navigateIssue(event.shiftKey ? -1 : 1);
+      } else if (
+        event.target === editor.current &&
+        !event.altKey &&
+        (event.ctrlKey || event.metaKey)
+      ) {
+        const key = event.key.toLowerCase();
+        if (key === "z" || (key === "y" && event.ctrlKey)) {
+          event.preventDefault();
+          moveHistory(key === "y" || event.shiftKey);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   return (
     <div className="workspace">
@@ -701,6 +849,71 @@ export function App({ host }: { host: EditorHost }) {
                   <option value="markdown">Markdown</option>
                 </select>
               </div>
+              <fieldset
+                className="proofreading-actions"
+                aria-label="Editing and proofreading actions"
+              >
+                <div className="body-history-actions">
+                  <button
+                    type="button"
+                    disabled={
+                      !bodyHistory.canUndo || composing || busy || !!pending
+                    }
+                    onClick={() => moveHistory(false)}
+                    aria-label="Undo body edit"
+                    title="Undo (Ctrl/Cmd+Z)"
+                  >
+                    Undo
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      !bodyHistory.canRedo || composing || busy || !!pending
+                    }
+                    onClick={() => moveHistory(true)}
+                    aria-label="Redo body edit"
+                    title="Redo (Ctrl/Cmd+Shift+Z)"
+                  >
+                    Redo
+                  </button>
+                </div>
+                <fieldset
+                  className="proofreading-navigation"
+                  aria-label="Navigate proofreading issues"
+                >
+                  <button
+                    type="button"
+                    disabled={
+                      !displayedDiagnostics.length ||
+                      composing ||
+                      busy ||
+                      !!pending
+                    }
+                    onClick={() => navigateIssue(-1)}
+                    aria-keyshortcuts="Shift+F8"
+                    title="Previous issue (Shift+F8)"
+                  >
+                    ← Previous issue
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      !displayedDiagnostics.length ||
+                      composing ||
+                      busy ||
+                      !!pending
+                    }
+                    onClick={() => navigateIssue(1)}
+                    aria-keyshortcuts="F8"
+                    title="Next issue (F8)"
+                  >
+                    Next issue →
+                  </button>
+                </fieldset>
+              </fieldset>
+              <span className="sr-only" role="status" aria-live="polite">
+                {issueAnnouncement}
+              </span>
               <label className="sr-only" htmlFor="text-body">
                 Text body
               </label>
@@ -713,12 +926,27 @@ export function App({ host }: { host: EditorHost }) {
                   composing || diagnosticDisplay?.analyzedRevision !== revision
                 }
                 composing={composing}
-                onChange={(value) => update("body", value)}
-                onCompositionStart={() => {
+                onChange={(value, edit) => update("body", value, edit)}
+                onApply={applyFix}
+                selectionRequest={selectionRequest}
+                onCompositionStart={(selection) => {
+                  composition.current = {
+                    text: draftRef.current?.body ?? "",
+                    selection,
+                  };
                   setComposing(true);
                   recheck();
                 }}
-                onCompositionEnd={() => {
+                onCompositionEnd={(value, selection) => {
+                  update("body", value);
+                  const started = composition.current;
+                  if (started)
+                    bodyHistory.record(started.text, value, {
+                      before: started.selection,
+                      after: selection,
+                      kind: "composition",
+                    });
+                  composition.current = null;
                   setComposing(false);
                   recheck();
                 }}
@@ -822,12 +1050,12 @@ export function App({ host }: { host: EditorHost }) {
         open={proofreadingOpen}
         result={currentAnalysis}
         catalog={catalog}
+        disabled={busy || composing || !!pending}
+        onApply={applyFix}
         onClose={() => setProofreadingOpen(false)}
-        onSelect={(start, end) => {
-          if (!editor.current || composing) return;
-          editor.current.focus();
-          editor.current.setSelectionRange(start, end);
-        }}
+        onSelect={(start, end, diagnostic) =>
+          selectRange({ start, end }, diagnostic)
+        }
         settings={analysisSettings}
         onSettings={(settings) => {
           try {

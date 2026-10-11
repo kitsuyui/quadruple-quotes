@@ -1,6 +1,6 @@
 # Proofreading roadmap
 
-Proofreading is advisory. It never rewrites a document, assigns an authorship score, sends text to a cloud service, or changes the saved workspace snapshot.
+Proofreading is advisory. It never automatically rewrites a document, assigns an authorship score, or sends text to a cloud service. Accepted fixes update only the draft; the saved workspace snapshot changes only through an explicit save.
 
 ## First delivery
 
@@ -36,6 +36,16 @@ This tracking layer does not require a CRDT or change saved documents. A future 
 An isolated Chromium 153 measurement on 2026-10-04 retained 200 spelling diagnostics while inserting an emoji before a 99,998-unit document, producing exactly 100,000 UTF-16 units. Tracking alone took a median 3.2 ms over eleven warm samples (2.7–3.6 ms). A separate production-preview input-to-next-frame sample took 34.8 ms, retained all 200 marks, shifted the first offset to 2, and displayed `Checking… 200 previous issues`. The first measurement excludes rendering; the second includes React and mirror updates but excludes the delayed worker check. These are observations on the checked machine, not cross-device latency guarantees.
 
 The GiNZA adapter only contacts the same-origin `/api/dependencies` proxy on a user-requested manual run while the plugin is enabled. If the local helper is absent, it reports a plugin error with setup guidance. Saved document data and analysis output remain separate.
+
+### Applying fixes and navigating issues
+
+`Diagnostic.fixes` contains named alternatives with explicit UTF-16 replacements, expected original text, and replacement text. `typos` supplies these actions; suggestion strings alone never become edits. The host requires the current document ID and analysis revision, verifies every precondition and scalar boundary, and rejects overlapping edits before applying the entire alternative. Provisional marks may retain messages and suggestions, but their fix buttons remain disabled until a matching analysis completes. Composition and navigation confirmations block editing actions.
+
+Inline details are a nonmodal dialog because they now contain buttons. Hover or caret selection reveals it; Ctrl/Cmd+. focuses the first available fix and Escape returns focus to the textarea when dismissing a focused card. The panel exposes the same single-fix actions. Accepted edits preserve unrelated Unicode and whitespace, select the replacement, and leave the document unsaved.
+
+Body undo/redo stores replacement transactions rather than workspace snapshots. Each fix and IME composition is one step; adjacent typing can coalesce within 750 ms. Later typing undoes before an earlier fix, and a new edit clears redo. History resets when opening another document, remains available after saving, and does not take over title-field native history. It trims older entries beyond 200 steps or 1,000,000 retained UTF-16 units, keeping the latest transaction. Buttons and Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z operate on the body.
+
+Previous/next buttons and Shift+F8 / F8 navigate diagnostics in source order, including distinct overlapping issues, and wrap at either end. The textarea reveals distant marks. Retained provisional ranges remain navigable, but that does not authorize applying their older fixes. LSP code actions and native hosts can reuse the fix protocol without adopting browser history or storage.
 
 ## Performance evidence to record
 

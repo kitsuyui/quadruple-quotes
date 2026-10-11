@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 
-const port = 4181;
-let server: Bun.Subprocess;
+let port: number;
+let server: Bun.Subprocess | undefined;
 const request = (body: unknown, init: RequestInit = {}) =>
   fetch(`http://127.0.0.1:${port}/api/dependencies`, {
     ...init,
@@ -11,6 +11,14 @@ const request = (body: unknown, init: RequestInit = {}) =>
   });
 
 beforeAll(async () => {
+  // Allocate a fresh test port instead of contacting another run's helper.
+  const reservation = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response(),
+  });
+  port = reservation.port ?? 0;
+  reservation.stop(true);
   server = Bun.spawn(["bun", "apps/analysis-host/server.ts"], {
     env: {
       ...process.env,
@@ -21,8 +29,12 @@ beforeAll(async () => {
     },
   });
   for (let attempt = 0; attempt < 20; attempt++) {
+    if (server.exitCode !== null)
+      throw new Error("test host exited before becoming ready");
     try {
       await request({ text: "ready" });
+      if (server.exitCode !== null)
+        throw new Error("test host did not own its port");
       return;
     } catch {
       await Bun.sleep(25);
@@ -30,7 +42,14 @@ beforeAll(async () => {
   }
   throw new Error("host did not start");
 });
-afterAll(() => server.kill());
+afterAll(async () => {
+  if (!server) return;
+  server.kill();
+  await Promise.race([server.exited, Bun.sleep(100)]);
+  // The helper's SIGTERM handler stops its parser; close this owned test host too.
+  if (server.exitCode === null) server.kill("SIGKILL");
+  await server.exited;
+});
 test("rejects unexpected origins and oversized or invalid input", async () => {
   expect(
     (

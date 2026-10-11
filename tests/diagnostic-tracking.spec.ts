@@ -45,7 +45,7 @@ for (const width of [1280, 390]) {
     const box = await marks.last().boundingBox();
     if (!box) throw new Error("Missing tracked mark");
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    const tooltip = page.getByRole("tooltip");
+    const tooltip = page.getByRole("dialog", { name: "Proofreading details" });
     await expect(tooltip).toContainText("Possible typo: adress");
     await expect(tooltip).toContainText("Rechecking…");
     await page.screenshot({ path: `.tmp/diagnostic-tracking-${width}.png` });
@@ -91,7 +91,9 @@ test("IME preserves distant marks, suppresses tooltips, and resumes with current
   const box = await marks.boundingBox();
   if (!box) throw new Error("Missing composition mark");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog", { name: "Proofreading details" }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Open proofreading issues" }),
   ).toHaveText("Checks paused while typing");

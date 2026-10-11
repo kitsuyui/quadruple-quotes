@@ -72,6 +72,22 @@ pub struct Diagnostic {
     pub invalidation_scope: InvalidationScope,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixes: Vec<DiagnosticFix>,
+}
+/// A host applies these replacements atomically to the matching analysis revision.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticFix {
+    pub label: String,
+    pub edits: Vec<TextEdit>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextEdit {
+    pub range: TextRange,
+    pub expected_text: String,
+    pub new_text: String,
 }
 /// Context that an editor must invalidate when retaining an older diagnostic.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -318,6 +334,7 @@ fn core_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
                     end: start + ch.len_utf16(),
                 },
                 suggestions: None,
+                fixes: vec![],
                 invalidation_scope: InvalidationScope::Range,
             });
         }
@@ -338,6 +355,7 @@ fn core_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
                 end: request.text.encode_utf16().count(),
             },
             suggestions: None,
+            fixes: vec![],
             invalidation_scope: InvalidationScope::Document,
         });
     }
@@ -377,12 +395,24 @@ fn typo_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
         let span = typo.span();
         let start = utf16_at(&request.text, span.start);
         let end = utf16_at(&request.text, span.end);
-        let suggestions = match typo.corrections {
+        let suggestions: Option<Vec<String>> = match typo.corrections {
             typos::Status::Corrections(values) => {
                 Some(values.into_iter().map(|value| value.into_owned()).collect())
             }
             _ => None,
         };
+        let fixes = suggestions
+            .iter()
+            .flatten()
+            .map(|suggestion| DiagnosticFix {
+                label: format!("Replace with {suggestion}"),
+                edits: vec![TextEdit {
+                    range: TextRange { start, end },
+                    expected_text: request.text[span.clone()].to_owned(),
+                    new_text: suggestion.clone(),
+                }],
+            })
+            .collect();
         out.push(Diagnostic {
             plugin_id: "typos".into(),
             rule_id: "typos.spelling".into(),
@@ -390,6 +420,7 @@ fn typo_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
             severity: Severity::Warning,
             range: TextRange { start, end },
             suggestions,
+            fixes,
             invalidation_scope: InvalidationScope::Word,
         });
     }
@@ -419,6 +450,7 @@ fn style_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
                     end: start + phrase.encode_utf16().count(),
                 },
                 suggestions: None,
+                fixes: vec![],
                 invalidation_scope: match request.format {
                     TextFormat::Markdown => InvalidationScope::Document,
                     TextFormat::Text => InvalidationScope::Sentence,
@@ -753,6 +785,26 @@ mod tests {
         );
         assert!(result.statuses.iter().any(|item| item.plugin_id == "typos" && matches!(item.status, PluginRunStatus::Ok)));
         assert_eq!(analysis_catalog().len(), 3);
+        let spelling = result
+            .diagnostics
+            .iter()
+            .find(|item| item.plugin_id == "typos")
+            .unwrap();
+        let json = serde_json::to_value(spelling).unwrap();
+        assert_eq!(
+            json["fixes"][0],
+            serde_json::json!({
+                "label": "Replace with the",
+                "edits": [{ "range": { "start": 4, "end": 7 }, "expectedText": "teh", "newText": "the" }]
+            })
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|item| item.plugin_id == "core")
+                .all(|item| item.fixes.is_empty())
+        );
     }
 
     #[test]

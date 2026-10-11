@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import type {
   AnalysisResult,
   AnalysisSettings,
+  Diagnostic,
+  DiagnosticFix,
   PluginDescriptor,
 } from "../../../packages/analysis/src/types";
+import { DiagnosticFixButtons } from "./DiagnosticFixButtons";
 
 export function ProofreadingPanel({
   result,
@@ -14,12 +17,16 @@ export function ProofreadingPanel({
   settings,
   onSettings,
   onDependencies,
+  onApply,
+  disabled,
 }: {
   result: AnalysisResult | null;
   catalog: PluginDescriptor[];
   open: boolean;
   onClose(): void;
-  onSelect(start: number, end: number): void;
+  onSelect(start: number, end: number, diagnostic?: Diagnostic): void;
+  onApply(diagnostic: Diagnostic, fix: DiagnosticFix): void;
+  disabled: boolean;
   settings: AnalysisSettings;
   onSettings(settings: AnalysisSettings): void;
   onDependencies(): void;
@@ -91,13 +98,19 @@ export function ProofreadingPanel({
           >
             <button
               type="button"
-              onClick={() => onSelect(item.range.start, item.range.end)}
+              onClick={() => onSelect(item.range.start, item.range.end, item)}
+              className="analysis-issue-select"
             >
               <small>
                 {item.pluginId} · {item.ruleId}
               </small>
               {item.message}
             </button>
+            <DiagnosticFixButtons
+              fixes={item.fixes}
+              disabled={disabled}
+              onApply={(fix) => onApply(item, fix)}
+            />
           </li>
         ))}
       </ul>

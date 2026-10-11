@@ -7,6 +7,18 @@ export interface Range {
   end: number;
 }
 
+/** An explicit replacement, checked against the analyzed text before applying. */
+export interface TextEdit {
+  range: Range;
+  expectedText: string;
+  newText: string;
+}
+
+export interface DiagnosticFix {
+  label: string;
+  edits: TextEdit[];
+}
+
 export interface Diagnostic {
   pluginId: string;
   ruleId: string;
@@ -17,6 +29,7 @@ export interface Diagnostic {
    * Missing metadata conservatively invalidates on any document edit. */
   invalidationScope?: "range" | "word" | "sentence" | "paragraph" | "document";
   suggestions?: string[];
+  fixes?: DiagnosticFix[];
 }
 
 export interface DependencyNode {

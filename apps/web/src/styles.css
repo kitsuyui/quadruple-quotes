@@ -102,7 +102,7 @@ button.primary:hover:not(:disabled) {
   padding: 0;
   margin: 0;
 }
-.analysis-issues button {
+.analysis-issue-select {
   display: flex;
   width: 100%;
   text-align: left;
@@ -579,7 +579,7 @@ button.primary:hover:not(:disabled) {
   margin-bottom: 20px;
 }
 .body-text {
-  padding: 0 3px 12px 0;
+  padding: 0 3px 12px 10px;
   font: inherit;
   line-height: 1.95;
   font-size: 15px;
@@ -668,6 +668,48 @@ button.primary:hover:not(:disabled) {
 .diagnostic-suggestions {
   color: #465d43;
 }
+.diagnostic-fixes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 7px 0 10px;
+}
+.diagnostic-fix-button {
+  display: inline-block;
+  width: auto;
+  border: 1px solid #d4dfcd;
+  background: #f2f6ee;
+  color: #3d5936;
+  padding: 5px 9px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.proofreading-actions,
+.body-history-actions,
+.proofreading-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.proofreading-actions,
+.proofreading-navigation {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+}
+.proofreading-actions {
+  justify-content: space-between;
+  margin-top: 12px;
+  gap: 8px;
+}
+.proofreading-actions button {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  color: #63775a;
+  font-size: 11px;
+}
 .inline-proofreading-summary {
   color: #797c73;
   padding: 6px;
@@ -685,9 +727,6 @@ button.primary:hover:not(:disabled) {
 }
 .body-editor:focus-within {
   box-shadow: -2px 0 0 #aabb9b;
-}
-.body-editor:focus-within .body-text {
-  padding-left: 10px;
 }
 .editor-footer {
   display: flex;

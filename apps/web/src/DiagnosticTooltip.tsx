@@ -1,21 +1,29 @@
 import { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import type { Diagnostic } from "../../../packages/analysis/src/types";
+import type {
+  Diagnostic,
+  DiagnosticFix,
+} from "../../../packages/analysis/src/types";
+import { DiagnosticFixButtons } from "./DiagnosticFixButtons";
 
 export function DiagnosticTooltip({
   id,
   diagnostics,
   pending,
+  disabled,
   anchor,
   onEnter,
   onLeave,
+  onApply,
 }: {
   id: string;
   diagnostics: Diagnostic[];
   pending: boolean;
+  disabled: boolean;
   anchor: { left: number; top: number; bottom: number };
   onEnter(): void;
   onLeave(): void;
+  onApply(diagnostic: Diagnostic, fix: DiagnosticFix): void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -34,15 +42,20 @@ export function DiagnosticTooltip({
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
     tooltip.style.visibility = "visible";
-  }, [anchor]);
+  });
   return createPortal(
     <div
       id={id}
       ref={element}
-      role="tooltip"
+      role="dialog"
+      aria-label="Proofreading details"
       className="diagnostic-tooltip"
       onPointerEnter={onEnter}
       onPointerLeave={onLeave}
+      onFocus={onEnter}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) onLeave();
+      }}
     >
       <ul>
         {diagnostics.map((diagnostic) => (
@@ -64,10 +77,17 @@ export function DiagnosticTooltip({
                 Suggested: {diagnostic.suggestions.join(", ")}
               </p>
             ) : null}
+            <DiagnosticFixButtons
+              fixes={diagnostic.fixes}
+              disabled={disabled || pending}
+              onApply={(fix) => onApply(diagnostic, fix)}
+            />
           </li>
         ))}
       </ul>
-      <small>{pending ? "Rechecking… · " : ""}Esc to dismiss</small>
+      <small>
+        {pending ? "Rechecking… · " : ""}Esc to dismiss · Ctrl/Cmd+. for fixes
+      </small>
     </div>,
     document.body,
   );
