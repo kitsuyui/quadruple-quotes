@@ -1,0 +1,10 @@
+[package]
+name = "quadruple-quotes-core"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "Platform-independent text workspace and snapshot format."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,9 @@
+/target/
+/node_modules/
+/apps/web/dist/
+/apps/web/src/generated/
+/playwright-report/
+/test-results/
+/.tmp/
+/.agent-inspect/
+/.audit-ledger/
