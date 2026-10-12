@@ -5,8 +5,14 @@ import type {
   Diagnostic,
   DiagnosticFix,
   PluginDescriptor,
+  SavedAnalysisPreset,
 } from "../../../packages/analysis/src/types";
+import {
+  DiagnosticExceptionButtons,
+  type ExceptionAction,
+} from "./DiagnosticExceptionButtons";
 import { DiagnosticFixButtons } from "./DiagnosticFixButtons";
+import { ProofreadingSettings } from "./ProofreadingSettings";
 
 export function ProofreadingPanel({
   result,
@@ -19,6 +25,11 @@ export function ProofreadingPanel({
   onDependencies,
   onApply,
   disabled,
+  presets,
+  document,
+  documents,
+  text,
+  onException,
 }: {
   result: AnalysisResult | null;
   catalog: PluginDescriptor[];
@@ -28,15 +39,21 @@ export function ProofreadingPanel({
   onApply(diagnostic: Diagnostic, fix: DiagnosticFix): void;
   disabled: boolean;
   settings: AnalysisSettings;
-  onSettings(settings: AnalysisSettings): void;
+  onSettings(
+    settings: AnalysisSettings,
+    presets?: SavedAnalysisPreset[],
+  ): boolean;
+  presets: SavedAnalysisPreset[];
+  document: { id: string; title: string } | null;
+  documents: { id: string; title: string }[];
+  text: string;
+  onException(diagnostic: Diagnostic, action: ExceptionAction): void;
   onDependencies(): void;
 }) {
   const [filter, setFilter] = useState("");
-  const [ruleFilter, setRuleFilter] = useState("");
   useEffect(() => {
     if (!open) {
       setFilter("");
-      setRuleFilter("");
     }
   }, [open]);
   if (!open) return null;
@@ -111,73 +128,24 @@ export function ProofreadingPanel({
               disabled={disabled}
               onApply={(fix) => onApply(item, fix)}
             />
+            <DiagnosticExceptionButtons
+              diagnostic={item}
+              text={text}
+              disabled={disabled || !result}
+              onException={onException}
+            />
           </li>
         ))}
       </ul>
-      <details className="analysis-settings">
-        <summary>Rules and plugins</summary>
-        <input
-          className="analysis-search"
-          aria-label="Search rules and plugins"
-          placeholder="Search rules and plugins"
-          value={ruleFilter}
-          onChange={(event) => setRuleFilter(event.target.value)}
-        />
-        {catalog.map((plugin) => {
-          const query = ruleFilter.toLowerCase();
-          const rules = plugin.rules.filter((rule) =>
-            `${rule.id} ${rule.name} ${rule.description}`
-              .toLowerCase()
-              .includes(query),
-          );
-          const matchesPlugin =
-            `${plugin.id} ${plugin.name} ${plugin.description}`
-              .toLowerCase()
-              .includes(query);
-          if (query && !matchesPlugin && rules.length === 0) return null;
-          return (
-            <details key={plugin.id} className="analysis-plugin" open={!!query}>
-              <summary>{plugin.name}</summary>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={settings.plugins[plugin.id] ?? plugin.defaultEnabled}
-                  onChange={(event) =>
-                    onSettings({
-                      ...settings,
-                      plugins: {
-                        ...settings.plugins,
-                        [plugin.id]: event.target.checked,
-                      },
-                    })
-                  }
-                />{" "}
-                <strong>{plugin.name}</strong>
-              </label>
-              <span>{plugin.description}</span>
-              {rules.map((rule) => (
-                <label key={rule.id}>
-                  <input
-                    type="checkbox"
-                    checked={settings.rules[rule.id] ?? rule.defaultEnabled}
-                    onChange={(event) =>
-                      onSettings({
-                        ...settings,
-                        rules: {
-                          ...settings.rules,
-                          [rule.id]: event.target.checked,
-                        },
-                      })
-                    }
-                  />{" "}
-                  <small>{rule.name}</small>
-                </label>
-              ))}
-            </details>
-          );
-        })}
-        <p>Settings are stored separately from your texts.</p>
-      </details>
+      <ProofreadingSettings
+        settings={settings}
+        presets={presets}
+        catalog={catalog}
+        document={document}
+        documents={documents}
+        disabled={disabled}
+        onSettings={onSettings}
+      />
       {(settings.plugins.ginza ?? false) && (
         <button type="button" onClick={onDependencies}>
           Run dependency analysis

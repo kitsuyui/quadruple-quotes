@@ -14,6 +14,7 @@ import type {
   Range,
 } from "../../../packages/analysis/src/types";
 import type { BodyEdit } from "./body-history";
+import type { ExceptionAction } from "./DiagnosticExceptionButtons";
 import { DiagnosticTooltip } from "./DiagnosticTooltip";
 import {
   type DiagnosticSegment,
@@ -44,6 +45,7 @@ export function BodyEditor({
   onCompositionEnd,
   onApply,
   selectionRequest,
+  onException,
 }: {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string;
@@ -56,6 +58,7 @@ export function BodyEditor({
   onCompositionEnd(value: string, selection: Range): void;
   onApply(diagnostic: Diagnostic, fix: DiagnosticFix): void;
   selectionRequest: Range | null;
+  onException(diagnostic: Diagnostic, action: ExceptionAction): void;
 }) {
   const mirror = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -417,6 +420,8 @@ export function BodyEditor({
           onEnter={cancelLeave}
           onLeave={leave}
           onApply={onApply}
+          text={value}
+          onException={onException}
         />
       )}
     </div>

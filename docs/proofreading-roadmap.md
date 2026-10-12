@@ -47,6 +47,22 @@ Body undo/redo stores replacement transactions rather than workspace snapshots. 
 
 Previous/next buttons and Shift+F8 / F8 navigate diagnostics in source order, including distinct overlapping issues, and wrap at either end. The textarea reveals distant marks. Retained provisional ranges remain navigable, but that does not authorize applying their older fixes. LSP code actions and native hosts can reuse the fix protocol without adopting browser history or storage.
 
+### Settings presets and exceptions
+
+Three explicit built-in presets use the current closed catalog: Basic enables text health and spelling; Japanese prose adds normalization, Japanese sentence endings and length; Markdown documentation adds Markdown structure and Japanese normalization. Markdown format remains a separate choice. All built-in presets disable style/AI hints and native dependency analysis. Up to 20 uniquely named custom presets capture effective rule switches, severity overrides and the optional grapheme limit. Applying any preset replaces that policy while retaining allowed words, document exceptions and valid unrecognized rule/plugin IDs. Deleting a preset does not change the active policy.
+
+`AnalysisSettings.allowedWords` permits up to 500 single words (100 UTF-16 units each), with ASCII case ignored. Only typos uses this allowlist; text-health and other engines still check the text. Its dictionary applies allowed words before collecting the first 200 spelling diagnostics, so allowed words cannot hide later visible spelling issues by consuming that budget. `ignoredRules` contains up to 500 distinct `{documentId, ruleId}` pairs. Each pair suppresses the whole rule in that document, not just one occurrence; duplicate documents have independent IDs. Exceptions survive archive/reload and remain listed, including for unavailable texts, until explicitly removed.
+
+The Rust core's `resolve_analysis_settings` disables document-excluded rules before analysis, including the worker's bundled adapters. `apply_diagnostic_settings` applies document suppression and per-rule `info`, `warning` or `error` severity to their diagnostics. Both functions are exported by the analysis WASM adapter. The UI never implements a separate diagnostic filter or rewrites text to apply an exception. Inline/list exception actions require a current document and revision, just like fixes; provisional or composing input cannot register an old diagnostic as a new exception.
+
+The browser persists envelope version 2 (`settings` and `presets`) at the unchanged settings key. Version 1 is loaded without mutation; the first explicit settings write migrates it. Validation rejects malformed data, unsupported versions, unexpected fields, invalid severities, duplicate entries, and oversized collections without overwriting the raw value. Rule maps retain at most 200 valid IDs per map, preset names have at most 60 characters, and the optional character limit is a whole number from 1 to 1,000,000,000. Unknown valid rule/plugin IDs are preserved; executable configuration, regular-expression exceptions and dynamic loading are unsupported.
+
+Writes compare the exact inspected raw settings value before updating, preserving the previous value if validation or storage fails. Storage events disable stale analysis and invalidate diagnostic/fix revisions. Reload proofreading settings reads only this configuration and leaves the draft and body history intact. Reset is an explicit replacement of the inspected settings value and clears saved presets as well; neither operation clears saved texts. Preset metadata-only changes do not restart analysis. This remains best-effort conflict detection across tabs, not a transactional shared store.
+
+Rule/exception changes, reload, and reset clear the prior manual dependency-run intent. Enabling a native parser through a saved preset therefore requires a new explicit Run dependency analysis action; saving or deleting preset metadata alone leaves analysis unchanged.
+
+Temporary single-occurrence dismissals, regular-expression exceptions, project/team settings, automatic language detection, and additional proofreading engines remain separate work.
+
 ## Performance evidence to record
 
 Before enabling an adapter by default, record cold and warm worker latency, a 100,000-unit request outcome, and built bundle output. These are regression evidence for the checked machine, not cross-device promises. Heavy or native-only analyzers stay manual until those measurements show an acceptable interaction cost.

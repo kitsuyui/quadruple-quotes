@@ -4,6 +4,10 @@ import type {
   Diagnostic,
   DiagnosticFix,
 } from "../../../packages/analysis/src/types";
+import {
+  DiagnosticExceptionButtons,
+  type ExceptionAction,
+} from "./DiagnosticExceptionButtons";
 import { DiagnosticFixButtons } from "./DiagnosticFixButtons";
 
 export function DiagnosticTooltip({
@@ -15,6 +19,8 @@ export function DiagnosticTooltip({
   onEnter,
   onLeave,
   onApply,
+  text,
+  onException,
 }: {
   id: string;
   diagnostics: Diagnostic[];
@@ -24,6 +30,8 @@ export function DiagnosticTooltip({
   onEnter(): void;
   onLeave(): void;
   onApply(diagnostic: Diagnostic, fix: DiagnosticFix): void;
+  text: string;
+  onException(diagnostic: Diagnostic, action: ExceptionAction): void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -82,11 +90,17 @@ export function DiagnosticTooltip({
               disabled={disabled || pending}
               onApply={(fix) => onApply(diagnostic, fix)}
             />
+            <DiagnosticExceptionButtons
+              diagnostic={diagnostic}
+              text={text}
+              disabled={disabled || pending}
+              onException={onException}
+            />
           </li>
         ))}
       </ul>
       <small>
-        {pending ? "Rechecking… · " : ""}Esc to dismiss · Ctrl/Cmd+. for fixes
+        {pending ? "Rechecking… · " : ""}Esc to dismiss · Ctrl/Cmd+. for actions
       </small>
     </div>,
     document.body,

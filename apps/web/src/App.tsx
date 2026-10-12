@@ -5,6 +5,7 @@ import {
 } from "../../../packages/analysis/src/diagnostic-navigation";
 import { trackDiagnostics } from "../../../packages/analysis/src/diagnostic-tracking";
 import { applyDiagnosticFix } from "../../../packages/analysis/src/fixes";
+import { allowWord, ignoreRule } from "../../../packages/analysis/src/settings";
 import type {
   AnalysisResult,
   AnalysisSettings,
@@ -12,8 +13,10 @@ import type {
   DiagnosticFix,
   PluginDescriptor,
   Range,
+  SavedAnalysisPreset,
 } from "../../../packages/analysis/src/types";
 import {
+  ANALYSIS_SETTINGS_KEY,
   resetAnalysisSettings,
   safelyLoadAnalysisSettings,
   saveAnalysisSettings,
@@ -21,6 +24,7 @@ import {
 import { BodyEditor } from "./BodyEditor";
 import { type BodyEdit, BodyHistory } from "./body-history";
 import { Confirmation } from "./Confirmation";
+import type { ExceptionAction } from "./DiagnosticExceptionButtons";
 import { Icon } from "./Icon";
 import { ProofreadingPanel } from "./ProofreadingPanel";
 import type { EditorHost, TextDocument } from "./ports";
@@ -91,12 +95,13 @@ export function App({ host }: { host: EditorHost }) {
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings>(
     initialAnalysisSettings.settings,
   );
+  const [savedPresets, setSavedPresets] = useState(
+    initialAnalysisSettings.presets,
+  );
   const [analysisError, setAnalysisError] = useState(
     initialAnalysisSettings.error,
   );
-  const analysisSettingsRaw = useRef(
-    window.localStorage.getItem("quadruple-quotes.proofreading-settings.v1"),
-  );
+  const analysisSettingsRaw = useRef(initialAnalysisSettings.raw);
   const editor = useRef<HTMLTextAreaElement>(null);
   const titleInput = useRef<HTMLInputElement>(null);
   const draftRef = useRef(draft);
@@ -157,6 +162,25 @@ export function App({ host }: { host: EditorHost }) {
   }, [host, proofreadingOpen, analysisError]);
 
   useEffect(() => () => host.analysis.dispose(), [host]);
+
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (
+        event.storageArea !== window.localStorage ||
+        (event.key !== ANALYSIS_SETTINGS_KEY && event.key !== null) ||
+        event.newValue === analysisSettingsRaw.current
+      )
+        return;
+      setAnalysisError(
+        "Proofreading settings changed in another tab. Reload proofreading settings to use them.",
+      );
+      revisionRef.current += 1;
+      setRevision(revisionRef.current);
+      setDiagnosticDisplay(null);
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
 
   useEffect(() => {
     if (!proofreadingOpen) setManualAnalysis(false);
@@ -467,6 +491,73 @@ export function App({ host }: { host: EditorHost }) {
     diagnosticDisplay.revision === revision
       ? diagnosticDisplay.diagnostics
       : [];
+
+  function changeSettings(
+    settings: AnalysisSettings,
+    presets: SavedAnalysisPreset[] = savedPresets,
+  ) {
+    try {
+      analysisSettingsRaw.current = saveAnalysisSettings(
+        window.localStorage,
+        settings,
+        analysisSettingsRaw.current,
+        presets,
+      );
+      const changed =
+        JSON.stringify(settings) !== JSON.stringify(analysisSettings);
+      setAnalysisSettings(settings);
+      setSavedPresets(presets);
+      setAnalysisError(null);
+      if (changed) {
+        setManualAnalysis(false);
+        invalidateAnalysis();
+      }
+      return true;
+    } catch (error) {
+      setAnalysisError(errorMessage(error));
+      return false;
+    }
+  }
+
+  function addException(diagnostic: Diagnostic, action: ExceptionAction) {
+    if (action === "allow-word" && diagnostic.ruleId !== "typos.spelling")
+      return;
+    const current = draftRef.current;
+    const result = analysisRef.current;
+    if (
+      !current ||
+      !result ||
+      composition.current ||
+      busy ||
+      pending ||
+      analysisError ||
+      result.documentId !== current.id ||
+      result.revision !== revisionRef.current ||
+      !result.diagnostics.includes(diagnostic)
+    )
+      return;
+    try {
+      const settings =
+        action === "allow-word" && diagnostic.ruleId === "typos.spelling"
+          ? allowWord(
+              analysisSettings,
+              current.body.slice(diagnostic.range.start, diagnostic.range.end),
+            )
+          : ignoreRule(analysisSettings, current.id, diagnostic.ruleId);
+      if (changeSettings(settings)) {
+        setNotice({
+          text:
+            action === "allow-word"
+              ? "Spelling word allowed in all texts. Manage it under Exceptions."
+              : "Rule excluded for this document. Manage it under Exceptions.",
+          error: false,
+        });
+        editor.current?.focus({ preventScroll: true });
+      }
+    } catch (error) {
+      setNotice({ text: errorMessage(error), error: true });
+    }
+  }
 
   function selectRange(range: Range, diagnostic?: Diagnostic) {
     const current = draftRef.current;
@@ -922,6 +1013,7 @@ export function App({ host }: { host: EditorHost }) {
                 inputRef={editor}
                 value={draft.body}
                 diagnostics={displayedDiagnostics}
+                onException={addException}
                 pending={
                   composing || diagnosticDisplay?.analyzedRevision !== revision
                 }
@@ -1057,20 +1149,12 @@ export function App({ host }: { host: EditorHost }) {
           selectRange({ start, end }, diagnostic)
         }
         settings={analysisSettings}
-        onSettings={(settings) => {
-          try {
-            analysisSettingsRaw.current = saveAnalysisSettings(
-              window.localStorage,
-              settings,
-              analysisSettingsRaw.current,
-            );
-            setAnalysisSettings(settings);
-            setAnalysisError(null);
-            invalidateAnalysis();
-          } catch (error) {
-            setAnalysisError(errorMessage(error));
-          }
-        }}
+        presets={savedPresets}
+        document={draft}
+        documents={documents}
+        text={draft?.body ?? ""}
+        onException={addException}
+        onSettings={changeSettings}
         onDependencies={() => {
           setManualAnalysis(true);
           recheck();
@@ -1079,6 +1163,20 @@ export function App({ host }: { host: EditorHost }) {
       {analysisError && (
         <div className="notice notice-error" role="alert">
           Proofreading is disabled: {analysisError}{" "}
+          <button
+            type="button"
+            onClick={() => {
+              const loaded = safelyLoadAnalysisSettings(window.localStorage);
+              analysisSettingsRaw.current = loaded.raw;
+              setAnalysisSettings(loaded.settings);
+              setSavedPresets(loaded.presets);
+              setAnalysisError(loaded.error);
+              setManualAnalysis(false);
+              invalidateAnalysis();
+            }}
+          >
+            Reload proofreading settings
+          </button>{" "}
           <button
             type="button"
             onClick={() => {
@@ -1091,6 +1189,8 @@ export function App({ host }: { host: EditorHost }) {
                   "quadruple-quotes.proofreading-settings.v1",
                 );
                 setAnalysisSettings(settings);
+                setSavedPresets([]);
+                setManualAnalysis(false);
                 setAnalysisError(null);
                 invalidateAnalysis();
               } catch (error) {
