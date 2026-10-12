@@ -24,6 +24,9 @@ export interface ClipboardPort {
 export interface EditorHost {
   repository: TextRepository;
   clipboard: ClipboardPort;
+  analysis: AnalysisPort;
   createId(): string;
   now(): number;
 }
+
+import type { AnalysisPort } from "../../../packages/analysis/src/types";

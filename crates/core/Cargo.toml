@@ -8,3 +8,8 @@ description = "Platform-independent text workspace and snapshot format."
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+unicode-segmentation.workspace = true
+typos.workspace = true
+typos-dict.workspace = true
+unicase.workspace = true
+pulldown-cmark.workspace = true

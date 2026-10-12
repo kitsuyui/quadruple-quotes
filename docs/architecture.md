@@ -1,6 +1,6 @@
 # Architecture
 
-Quadruple Quotes is a text management and proofreading tool. The first stage implements plain-text management only. All components live in this repository.
+Quadruple Quotes is a text management and proofreading tool. It provides local document management and opt-in proofreading. All components live in this repository.
 
 ```text
 React editor → EditorHost ports → browser adapter → WASM transport → Rust core
@@ -12,15 +12,15 @@ React editor → EditorHost ports → browser adapter → WASM transport → Rus
 | --- | --- | --- |
 | `crates/core` | Documents, save/duplicate/archive/delete rules, validation, versioned snapshots | Implemented |
 | `crates/wasm` | Thin JSON transport to the same core | Implemented |
-| `apps/web` | Editor, sidebar, draft lifecycle, browser storage and clipboard | Implemented |
-| Proofreading plugins | Analysis capabilities and opt-in suggestions | WIP; no implementation |
+| `apps/web` | Editor, sidebar, draft lifecycle, browser storage, clipboard, and analysis worker | Implemented |
+| Proofreading plugins | Rust analysis, bundled Markdown/textlint rules, and opt-in local dependency analysis | Implemented |
 | LSP | Native core adapter for document synchronization and diagnostics | WIP; no implementation |
 | VSCode extension | LSP client and editor integration | WIP; no implementation |
 | Desktop | Reuse the React editor with a Tauri host adapter | WIP; no implementation |
 
 ## Dependency direction
 
-The core depends only on serialization libraries. It accepts document IDs and timestamps from its host, holds documents in memory, and reads/writes a versioned JSON snapshot. It has no IO or platform clock. A native LSP or desktop host can use this crate without WebAssembly or React.
+The core accepts document IDs and timestamps from its host, holds documents in memory, and reads/writes a versioned JSON snapshot. Its analysis uses Unicode and spelling libraries, with no IO or platform clock. A native LSP or desktop host can use this crate without WebAssembly or React.
 
 The WASM crate translates errors and JSON across the browser boundary. It delegates mutations and snapshot validation to the core. No text management behavior is implemented a second time in TypeScript.
 
@@ -40,11 +40,17 @@ The browser adapter creates a candidate core workspace, performs the mutation, p
 
 Saving is local to the current browser profile and origin. It is not a file download or cloud backup; clearing browser data removes stored texts. Clipboard buttons require browser permission and a secure context (including localhost). Native copy/paste shortcuts remain available in the textarea.
 
-## Future plugin boundary (WIP)
+## Proofreading boundary
 
-Separate analysis, storage, transport, and UI contributions instead of a single global plugin object. An analysis plugin should receive an immutable document/revision and return diagnostics or proposed edits; the host should decide when to apply them. Explicit capability registration and versioned interfaces should precede any runtime loading mechanism. Do not introduce dynamic library loading, a plugin registry, or placeholder actions before a concrete plugin is needed.
+Separate analysis, storage, transport, and UI contributions instead of a single global plugin object. The analysis worker receives an immutable document/revision and returns diagnostics or proposed edits; the host decides when to apply them. Its trusted adapter catalog contains only bundled modules, loaded only when enabled. It does not load user-provided code or a remote plugin registry.
 
-LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports. These boundaries leave room for the next stages without implementing them in this stage.
+Realtime analysis follows the current draft independently of the Proofreading panel. Updates cancel prior worker work and schedule a new request after 350 ms; composition suspends scheduling. Confirmed results require the current document and revision. A separate provisional display maps unaffected diagnostics through UTF-16 edit differences and removes diagnostics whose declared word, sentence, paragraph, or document context changed. Missing scope metadata invalidates on any edit. Retained hover cards indicate `Rechecking…`; composition preserves unaffected marks while suppressing cards. A current result replaces provisional display as a whole, while document, format, and rule-setting changes clear it. Panel metrics and dependency trees require a current confirmed result. The catalog remains lazy until the panel opens, and native dependency runs remain gated by an explicit request and an open panel. See [diagnostic tracking](proofreading-roadmap.md#tracking-diagnostics-during-editing) for boundary behavior and performance evidence.
+
+`BodyEditor` retains a native textarea for editing, clipboard shortcuts, selection, and IME. An aria-hidden, noninteractive mirror renders only wavy decorations, sharing typography, padding, wrapping, width, and scroll offsets with the textarea. Display ranges expand to whole graphemes and provide nearby anchors for invisible or insertion diagnostics; original UTF-16 ranges remain unchanged for panel selection and future host adapters. Overlapping ranges render the strongest severity without duplicating text. No mirror text is rendered when there are no diagnostics or input exceeds the analysis limit; display work is capped at 200 diagnostics. The footer provides a keyboard-accessible path to messages and rule controls.
+
+Each display segment retains the indices of all diagnostics covering it. Adjacent segments merge only when their severity and diagnostic membership match, so hover messages stay attached to their own ranges. The textarea performs pointer hit testing against cached, visible mirror rectangles; font changes, resizing, scrolling, and new segments invalidate that cache. Keyboard selection and touch expose the same messages through an aria-described nonmodal details dialog. Its card stays inside the viewport, remains hoverable, and supports Escape dismissal. Fix buttons apply only explicit, validated edits to the current draft. Provisional diagnostics cannot apply fixes. Body history and navigation remain editor-host concerns; see [fixes and navigation](proofreading-roadmap.md#applying-fixes-and-navigating-issues) for their contracts.
+
+LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports.
 
 ## Reference patterns
 

@@ -4,6 +4,7 @@
     "includes": [
       "**",
       "!!**/generated",
+      "!!**/generated-analysis",
       "!!**/dist",
       "!!**/target",
       "!!**/node_modules",
