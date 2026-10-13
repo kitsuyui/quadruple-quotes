@@ -7,6 +7,8 @@ import {
 type AnalysisWasm = {
   analyze_text(request: string): string;
   analysis_catalog(): string;
+  resolve_analysis_settings(request: string): string;
+  apply_diagnostic_settings(request: string): string;
 };
 
 let ready: Promise<AnalysisWasm> | null = null;
@@ -66,7 +68,18 @@ self.onmessage = async (
       });
       return;
     }
-    const request = event.data as AnalysisRequest;
+    const original = event.data as AnalysisRequest;
+    const request: AnalysisRequest = {
+      ...original,
+      settings: JSON.parse(
+        engine.resolve_analysis_settings(
+          JSON.stringify({
+            documentId: original.documentId,
+            settings: original.settings,
+          }),
+        ),
+      ),
+    };
     if (typeof engine.analyze_text !== "function")
       throw new Error(
         "The proofreading engine is unavailable. Rebuild the WASM adapter.",
@@ -92,7 +105,16 @@ self.onmessage = async (
             }),
           }
         : await runTrustedAdapters(request);
-    const diagnostics = [...result.diagnostics, ...adapters.diagnostics];
+    const adapterDiagnostics = JSON.parse(
+      engine.apply_diagnostic_settings(
+        JSON.stringify({
+          documentId: request.documentId,
+          settings: request.settings,
+          diagnostics: adapters.diagnostics,
+        }),
+      ),
+    );
+    const diagnostics = [...result.diagnostics, ...adapterDiagnostics];
     result.diagnostics = diagnostics.slice(0, 200);
     result.truncated ||= diagnostics.length > 200;
     result.statuses = [...result.statuses, ...adapters.statuses];

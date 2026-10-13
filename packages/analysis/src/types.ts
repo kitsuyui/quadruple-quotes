@@ -63,10 +63,27 @@ export interface PluginDescriptor {
   rules: RuleDescriptor[];
 }
 
-export interface AnalysisSettings {
+export interface RuleSettings {
   plugins: Record<string, boolean>;
   rules: Record<string, boolean>;
   characterLimit?: number;
+  severities?: Record<string, Severity>;
+}
+
+export interface DocumentRuleException {
+  documentId: string;
+  ruleId: string;
+}
+
+export interface AnalysisSettings extends RuleSettings {
+  /** Case-insensitive ASCII spelling allowlist; unrelated rules remain active. */
+  allowedWords?: string[];
+  ignoredRules?: DocumentRuleException[];
+}
+
+export interface SavedAnalysisPreset {
+  name: string;
+  settings: RuleSettings;
 }
 
 export interface AnalysisRequest {

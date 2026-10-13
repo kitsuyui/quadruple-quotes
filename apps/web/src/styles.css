@@ -74,6 +74,12 @@ button.primary:hover:not(:disabled) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  position: sticky;
+  top: -18px;
+  z-index: 1;
+  margin: -18px -18px 0;
+  padding: 18px;
+  background: #f7f8f3;
 }
 .proofreading-panel :where(header strong) {
   font-family: "Manrope", sans-serif;
@@ -683,6 +689,114 @@ button.primary:hover:not(:disabled) {
   padding: 5px 9px;
   font-size: 11px;
   overflow-wrap: anywhere;
+}
+.diagnostic-exceptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-block: 7px;
+}
+.diagnostic-exceptions button {
+  border: 1px solid var(--border);
+  color: #617358;
+  padding: 4px 7px;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.settings-controls {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+  min-inline-size: 0;
+}
+.settings-controls > label,
+.settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+.settings-select,
+.settings-input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 8px;
+  background: #fffefa;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.settings-help {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  margin-block: 12px;
+}
+.settings-form label {
+  flex: 1 1 150px;
+}
+.settings-controls button {
+  border: 1px solid var(--border);
+  color: #53674c;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.settings-list {
+  list-style: none;
+  padding: 0;
+  font-size: 12px;
+}
+.settings-list-item {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-block: 8px;
+}
+.settings-list-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.settings-list small {
+  display: block;
+  color: var(--muted);
+}
+.settings-error {
+  color: #a22f2f;
+  font-size: 12px;
+}
+.analysis-rule {
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+  margin-top: 9px;
+}
+.analysis-rule label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+.rule-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.rule-options select {
+  flex: 1 1 130px;
+  width: auto;
+  padding: 5px;
 }
 .proofreading-actions,
 .body-history-actions,

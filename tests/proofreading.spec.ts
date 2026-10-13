@@ -565,5 +565,5 @@ test("corrupt proofreading settings disable only analysis and can be reset witho
   ).toBe(workspace);
   expect(
     await page.evaluate((key) => localStorage.getItem(key), settingsKey),
-  ).toContain('"schemaVersion":1');
+  ).toContain('"schemaVersion":2');
 });

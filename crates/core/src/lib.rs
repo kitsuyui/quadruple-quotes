@@ -34,8 +34,68 @@ pub struct AnalysisSettings {
     pub plugins: std::collections::BTreeMap<String, bool>,
     #[serde(default)]
     pub rules: std::collections::BTreeMap<String, bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character_limit: Option<usize>,
+    #[serde(default)]
+    pub severities: std::collections::BTreeMap<String, Severity>,
+    #[serde(default)]
+    pub allowed_words: Vec<String>,
+    #[serde(default)]
+    pub ignored_rules: Vec<DocumentRuleException>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DocumentRuleException {
+    pub document_id: String,
+    pub rule_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiagnosticPolicyRequest {
+    pub document_id: String,
+    pub settings: AnalysisSettings,
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Resolve document exceptions before running any engine, including host adapters.
+pub fn resolve_analysis_settings(
+    document_id: &str,
+    settings: &AnalysisSettings,
+) -> AnalysisSettings {
+    let mut resolved = settings.clone();
+    for exception in &settings.ignored_rules {
+        if exception.document_id == document_id {
+            resolved.rules.insert(exception.rule_id.clone(), false);
+        }
+    }
+    resolved
+}
+
+/// Shared policy for native and bundled host engines; exceptions do not edit text.
+pub fn apply_diagnostic_settings(request: DiagnosticPolicyRequest) -> Vec<Diagnostic> {
+    let ignored: HashSet<&str> = request
+        .settings
+        .ignored_rules
+        .iter()
+        .filter(|item| item.document_id == request.document_id)
+        .map(|item| item.rule_id.as_str())
+        .collect();
+    request
+        .diagnostics
+        .into_iter()
+        .filter_map(|mut item| {
+            if ignored.contains(item.rule_id.as_str()) {
+                return None;
+            }
+            if let Some(severity) = request.settings.severities.get(&item.rule_id) {
+                item.severity = severity.clone();
+            }
+            Some(item)
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -245,6 +305,10 @@ fn rule(id: &str, name: &str, default_enabled: bool) -> RuleDescriptor {
 }
 
 pub fn analyze_text(request: AnalysisRequest) -> AnalysisResult {
+    let request = AnalysisRequest {
+        settings: resolve_analysis_settings(&request.document_id, &request.settings),
+        ..request
+    };
     let metrics = metrics(&request.text);
     let over_limit = metrics.utf16_units > MAX_ANALYSIS_UTF16_UNITS;
     let mut diagnostics = Vec::new();
@@ -280,6 +344,11 @@ pub fn analyze_text(request: AnalysisRequest) -> AnalysisResult {
             message: None,
         });
     }
+    let mut diagnostics = apply_diagnostic_settings(DiagnosticPolicyRequest {
+        document_id: request.document_id.clone(),
+        settings: request.settings.clone(),
+        diagnostics,
+    });
     let capped = diagnostics.len() > MAX_DIAGNOSTICS;
     diagnostics.truncate(MAX_DIAGNOSTICS);
     AnalysisResult {
@@ -360,7 +429,9 @@ fn core_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
         });
     }
 }
-struct TypoDictionary;
+struct TypoDictionary {
+    allowed: HashSet<String>,
+}
 impl typos::Dictionary for TypoDictionary {
     fn correct_ident<'s>(
         &'s self,
@@ -374,6 +445,9 @@ impl typos::Dictionary for TypoDictionary {
 }
 impl TypoDictionary {
     fn correct_token<'s>(&'s self, token: &str) -> Option<typos::Status<'s>> {
+        if !self.allowed.is_empty() && self.allowed.contains(&token.to_ascii_lowercase()) {
+            return Some(typos::Status::Valid);
+        }
         typos_dict::WORD_TRIE
             .find(&unicase::UniCase::unicode(token))
             .map(|values| {
@@ -390,7 +464,14 @@ fn typo_diagnostics(request: &AnalysisRequest, out: &mut Vec<Diagnostic>) {
         return;
     }
     let tokenizer = typos::tokens::Tokenizer::new();
-    let dictionary = TypoDictionary;
+    let dictionary = TypoDictionary {
+        allowed: request
+            .settings
+            .allowed_words
+            .iter()
+            .map(|word| word.to_ascii_lowercase())
+            .collect(),
+    };
     for typo in typos::check_str(&request.text, &tokenizer, &dictionary).take(MAX_DIAGNOSTICS) {
         let span = typo.span();
         let start = utf16_at(&request.text, span.start);
@@ -857,6 +938,119 @@ mod tests {
             "📝 `In conclusion` https://example.test/In%20conclusion\n"
                 .encode_utf16()
                 .count()
+        );
+    }
+
+    #[test]
+    fn spelling_allowlist_is_case_insensitive_and_precedes_diagnostic_limit() {
+        let text = format!("{}📝 adress\u{200B}", "teh TEH Teh ".repeat(100));
+        let settings = AnalysisSettings {
+            allowed_words: vec!["TeH".into()],
+            ..AnalysisSettings::default()
+        };
+        let result = analyze_text(AnalysisRequest {
+            document_id: "one".into(),
+            revision: 1,
+            text: text.clone(),
+            format: TextFormat::Text,
+            settings,
+            manual: false,
+        });
+        assert!(!result.truncated);
+        assert_eq!(result.diagnostics.len(), 2);
+        let spelling = result
+            .diagnostics
+            .iter()
+            .find(|item| item.rule_id == "typos.spelling")
+            .unwrap();
+        assert_eq!(spelling.range.start, 1203);
+        assert_eq!(spelling.fixes[0].edits[0].expected_text, "adress");
+        assert_eq!(result.metrics.utf16_units, text.encode_utf16().count());
+    }
+
+    #[test]
+    fn document_exceptions_are_resolved_before_analysis_and_preserve_global_switches() {
+        let settings = AnalysisSettings {
+            ignored_rules: vec![DocumentRuleException {
+                document_id: "one".into(),
+                rule_id: "typos.spelling".into(),
+            }],
+            severities: [("core.zero-width".into(), Severity::Info)].into(),
+            ..AnalysisSettings::default()
+        };
+        let resolved = resolve_analysis_settings("one", &settings);
+        assert_eq!(resolved.rules.get("typos.spelling"), Some(&false));
+        assert!(settings.rules.is_empty());
+        for (document_id, count) in [("one", 1), ("copy", 2)] {
+            let result = analyze_text(AnalysisRequest {
+                document_id: document_id.into(),
+                revision: 1,
+                text: "📝 teh\u{200B}".into(),
+                format: TextFormat::Text,
+                settings: settings.clone(),
+                manual: false,
+            });
+            assert_eq!(result.diagnostics.len(), count);
+            assert!(matches!(
+                result
+                    .diagnostics
+                    .iter()
+                    .find(|item| item.rule_id == "core.zero-width")
+                    .unwrap()
+                    .severity,
+                Severity::Info
+            ));
+        }
+    }
+
+    #[test]
+    fn host_diagnostics_share_exception_and_severity_policy_without_editing_fixes() {
+        let item = Diagnostic {
+            plugin_id: "markdownlint".into(),
+            rule_id: "markdownlint.MD009".into(),
+            message: "Trailing spaces".into(),
+            severity: Severity::Warning,
+            range: TextRange { start: 2, end: 4 },
+            invalidation_scope: InvalidationScope::Document,
+            suggestions: None,
+            fixes: vec![],
+        };
+        let settings = AnalysisSettings {
+            severities: [("markdownlint.MD009".into(), Severity::Error)].into(),
+            ignored_rules: vec![DocumentRuleException {
+                document_id: "one".into(),
+                rule_id: "markdownlint.MD009".into(),
+            }],
+            ..AnalysisSettings::default()
+        };
+        assert!(
+            apply_diagnostic_settings(DiagnosticPolicyRequest {
+                document_id: "one".into(),
+                settings: settings.clone(),
+                diagnostics: vec![item.clone()]
+            })
+            .is_empty()
+        );
+        let visible = apply_diagnostic_settings(DiagnosticPolicyRequest {
+            document_id: "other".into(),
+            settings,
+            diagnostics: vec![item],
+        });
+        assert!(matches!(visible[0].severity, Severity::Error));
+        assert_eq!(visible[0].range.start, 2);
+        assert_eq!(visible[0].range.end, 4);
+        let legacy: AnalysisSettings =
+            serde_json::from_str(r#"{"plugins":{},"rules":{}}"#).unwrap();
+        assert!(
+            legacy.allowed_words.is_empty()
+                && legacy.ignored_rules.is_empty()
+                && legacy.severities.is_empty()
+        );
+        assert!(
+            serde_json::to_value(&legacy)
+                .unwrap()
+                .get("characterLimit")
+                .is_none()
         );
     }
 
