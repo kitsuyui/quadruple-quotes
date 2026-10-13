@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, error::Error, fmt};
 use unicode_segmentation::UnicodeSegmentation;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
+pub const MAX_IMPORT_BYTES: usize = 10 * 1024 * 1024;
+pub const MAX_IMPORT_DOCUMENTS: usize = 1_000;
 pub const MAX_ANALYSIS_UTF16_UNITS: usize = 100_000;
 pub const MAX_DIAGNOSTICS: usize = 200;
 
@@ -20,9 +22,10 @@ pub struct AnalysisRequest {
     pub manual: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TextFormat {
+    #[default]
     Text,
     Markdown,
 }
@@ -583,6 +586,8 @@ pub struct Document {
     pub updated_at: u64,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub format: TextFormat,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -608,6 +613,8 @@ pub enum WorkspaceError {
     InvalidId,
     DuplicateId(String),
     NotFound(String),
+    ImportLimit,
+    InvalidTimestamp,
 }
 
 impl fmt::Display for WorkspaceError {
@@ -620,6 +627,8 @@ impl fmt::Display for WorkspaceError {
             Self::InvalidId => write!(f, "A document ID must not be empty or contain whitespace"),
             Self::DuplicateId(id) => write!(f, "Duplicate document ID: {id}"),
             Self::NotFound(id) => write!(f, "Document not found: {id}"),
+            Self::ImportLimit => write!(f, "Import exceeds 10 MiB or 1,000 texts"),
+            Self::InvalidTimestamp => write!(f, "Invalid document timestamp"),
         }
     }
 }
@@ -635,7 +644,7 @@ impl Workspace {
     pub fn from_json(json: &str) -> Result<Self, WorkspaceError> {
         let mut snapshot: Snapshot =
             serde_json::from_str(json).map_err(WorkspaceError::InvalidSnapshot)?;
-        if snapshot.schema_version != 1 && snapshot.schema_version != SCHEMA_VERSION {
+        if !(1..=SCHEMA_VERSION).contains(&snapshot.schema_version) {
             return Err(WorkspaceError::UnsupportedVersion(snapshot.schema_version));
         }
         // Version 1 documents have no archive flag; serde defaults it to false.
@@ -643,6 +652,7 @@ impl Workspace {
         let mut ids = HashSet::new();
         for document in &snapshot.documents {
             validate_id(&document.id)?;
+            validate_timestamp(document.updated_at)?;
             if !ids.insert(&document.id) {
                 return Err(WorkspaceError::DuplicateId(document.id.clone()));
             }
@@ -661,6 +671,7 @@ impl Workspace {
     /// Creates or replaces a document without changing its identity or text bytes.
     pub fn save(&mut self, document: Document) -> Result<(), WorkspaceError> {
         validate_id(&document.id)?;
+        validate_timestamp(document.updated_at)?;
         if let Some(existing) = self
             .snapshot
             .documents
@@ -693,6 +704,7 @@ impl Workspace {
         updated_at: u64,
     ) -> Result<Document, WorkspaceError> {
         validate_id(new_id)?;
+        validate_timestamp(updated_at)?;
         if self
             .snapshot
             .documents
@@ -718,6 +730,7 @@ impl Workspace {
             body: source.body.clone(),
             updated_at,
             archived: false,
+            format: source.format.clone(),
         };
         self.snapshot.documents.push(document.clone());
         Ok(document)
@@ -734,6 +747,50 @@ impl Workspace {
         document.archived = archived;
         Ok(())
     }
+
+    /// Validate a bounded backup without changing any workspace.
+    pub fn inspect_import(json: &str) -> Result<Self, WorkspaceError> {
+        if json.len() > MAX_IMPORT_BYTES {
+            return Err(WorkspaceError::ImportLimit);
+        }
+        let workspace = Self::from_json(json)?;
+        if workspace.documents().len() > MAX_IMPORT_DOCUMENTS {
+            return Err(WorkspaceError::ImportLimit);
+        }
+        Ok(workspace)
+    }
+
+    /// Append a backup with new host-supplied identities, atomically in memory.
+    pub fn import_json(&mut self, json: &str, new_ids: Vec<String>) -> Result<(), WorkspaceError> {
+        let incoming = Self::inspect_import(json)?;
+        if incoming.documents().len() != new_ids.len()
+            || self.documents().len() + new_ids.len() > MAX_IMPORT_DOCUMENTS
+        {
+            return Err(WorkspaceError::ImportLimit);
+        }
+        let mut ids: HashSet<String> = self.documents().iter().map(|d| d.id.clone()).collect();
+        for id in &new_ids {
+            validate_id(id)?;
+            if !ids.insert(id.clone()) {
+                return Err(WorkspaceError::DuplicateId(id.clone()));
+            }
+        }
+        let mut next = self.clone();
+        for (document, id) in incoming.documents().iter().zip(new_ids) {
+            let mut copy = document.clone();
+            copy.id = id;
+            next.save(copy)?;
+        }
+        *self = next;
+        Ok(())
+    }
+}
+
+fn validate_timestamp(value: u64) -> Result<(), WorkspaceError> {
+    if value > 8_640_000_000_000_000 {
+        return Err(WorkspaceError::InvalidTimestamp);
+    }
+    Ok(())
 }
 
 fn validate_id(id: &str) -> Result<(), WorkspaceError> {
@@ -754,6 +811,7 @@ mod tests {
             body: body.into(),
             updated_at: 123,
             archived: false,
+            format: TextFormat::Text,
         }
     }
 
@@ -772,11 +830,69 @@ mod tests {
     }
 
     #[test]
+    fn backup_import_preserves_format_archive_and_text_with_new_identities() {
+        let mut source = Workspace::default();
+        let mut original = text("one", "\u{feff}  日本語 📝\r\nCafe\u{301}\t\n");
+        original.archived = true;
+        original.format = TextFormat::Markdown;
+        source.save(original.clone()).unwrap();
+        let json = source.to_json().unwrap();
+        let mut target = Workspace::default();
+        target.save(text("one", "Keep existing")).unwrap();
+        target.import_json(&json, vec!["new".into()]).unwrap();
+        assert_eq!(target.documents()[0].body, "Keep existing");
+        original.id = "new".into();
+        assert_eq!(target.documents()[1], original);
+        assert_eq!(
+            Workspace::from_json(&target.to_json().unwrap())
+                .unwrap()
+                .documents(),
+            target.documents()
+        );
+        for version in [1, 2] {
+            let legacy = format!(
+                r#"{{"schemaVersion":{version},"documents":[{{"id":"legacy","title":"","body":"\r\n","updatedAt":123}}]}}"#
+            );
+            let old = Workspace::inspect_import(&legacy).unwrap();
+            assert_eq!(old.documents()[0].format, TextFormat::Text);
+            assert_eq!(old.documents()[0].body, "\r\n");
+        }
+    }
+
+    #[test]
+    fn imports_reject_invalid_and_conflicting_data_atomically() {
+        let mut target = Workspace::default();
+        target.save(text("keep", "Original")).unwrap();
+        let before = target.to_json().unwrap();
+        let valid = r#"{"schemaVersion":3,"documents":[{"id":"one","title":"","body":"incoming","updatedAt":123}]}"#;
+        assert!(target.import_json(valid, vec!["keep".into()]).is_err());
+        assert!(target.import_json(valid, vec![]).is_err());
+        for invalid in [
+            "not JSON",
+            r#"{"schemaVersion":4,"documents":[]}"#,
+            r#"{"schemaVersion":3,"documents":[],"unknown":true}"#,
+            r#"{"schemaVersion":3,"documents":[{"id":"one","title":"","body":"a","updatedAt":123,"format":"html"}]}"#,
+        ] {
+            assert!(target.import_json(invalid, vec![]).is_err());
+        }
+        let too_large = " ".repeat(MAX_IMPORT_BYTES + 1);
+        assert!(matches!(
+            Workspace::inspect_import(&too_large),
+            Err(WorkspaceError::ImportLimit)
+        ));
+        assert_eq!(target.to_json().unwrap(), before);
+        let mut invalid_time = text("time", "kept");
+        invalid_time.updated_at = u64::MAX;
+        assert!(target.save(invalid_time).is_err());
+        assert_eq!(target.to_json().unwrap(), before);
+    }
+
+    #[test]
     fn invalid_or_future_snapshots_are_rejected_without_mutation() {
         assert!(Workspace::from_json("not JSON").is_err());
         assert!(matches!(
-            Workspace::from_json(r#"{"schemaVersion":3,"documents":[]}"#),
-            Err(WorkspaceError::UnsupportedVersion(3))
+            Workspace::from_json(r#"{"schemaVersion":4,"documents":[]}"#),
+            Err(WorkspaceError::UnsupportedVersion(4))
         ));
         let duplicate = Snapshot {
             schema_version: SCHEMA_VERSION,

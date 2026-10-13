@@ -24,13 +24,13 @@ The core accepts document IDs and timestamps from its host, holds documents in m
 
 The WASM crate translates errors and JSON across the browser boundary. It delegates mutations and snapshot validation to the core. No text management behavior is implemented a second time in TypeScript.
 
-The React editor depends on `EditorHost`, not the browser adapter. `TextRepository`, `ClipboardPort`, ID creation, and the clock are replaceable host capabilities. A future Tauri adapter can use native commands for persistence and clipboard while reusing the editor. No Tauri-specific code is required yet.
+The React editor depends on `EditorHost`, not the browser adapter. `TextRepository`, `ClipboardPort`, `FilePort`, `RecoveryPort`, ID creation, and the clock are replaceable host capabilities. A future Tauri adapter can use native commands for persistence, files and clipboard while reusing the editor. No Tauri-specific code is required yet.
 
 ## Persistence and drafts
 
-The browser stores one snapshot under the stable key `quadruple-quotes.workspace.v1` in localStorage. Snapshot version 2 adds an `archived` boolean to each document. The Rust core reads version 1 documents with `archived: false` and exports version 2; legacy storage is only rewritten after a successful mutation. Older builds reject the new version rather than interpreting it as empty data.
+The browser stores one snapshot under the stable key `quadruple-quotes.workspace.v1` in localStorage. Snapshot version 2 adds an `archived` boolean, and version 3 adds per-document `format` (`text` or `markdown`). The Rust core reads versions 1 and 2 with defaults (`archived: false`, `format: text`) and exports version 3; legacy storage is only rewritten after a successful mutation. Older builds reject the new version rather than interpreting it as empty data.
 
-A draft stays in React until Save (or Cmd/Ctrl+S). Navigation asks whether to save, discard, or cancel; closing/reloading with edits uses the browser's beforeunload prompt. Deletion requires confirmation naming the target. Each sidebar row has separate open and action controls, so a command targets that row even while another document has unsaved edits.
+A draft changes the saved workspace only through Save (or Cmd/Ctrl+S). A separate recovery copy captures title, body and format without changing that snapshot. Navigation asks whether to save, discard, or cancel; closing/reloading with edits uses the browser's beforeunload prompt. Deletion requires confirmation naming the target. Each sidebar row has separate open and action controls, so a command targets that row even while another document has unsaved edits.
 
 Archive and restore are core mutations that only change the archive flag, keeping body, title, ID, and edit timestamp intact. The UI filters active/archived lists, and protects unsaved edits before archiving or restoring the current text. A new unsaved draft must be saved before archive is enabled. Archived texts remain editable and deletable. Removing another text does not discard the current draft.
 
@@ -39,6 +39,14 @@ Duplicate is a core mutation that copies a saved text's exact body into a new ID
 The browser adapter creates a candidate core workspace, performs the mutation, persists its snapshot, and only then replaces the active core. Quota/permission failures leave both the saved documents and draft available. Invalid or unsupported snapshots are rejected without clearing storage. Each mutation compares the loaded snapshot with current storage to reject stale tabs. This is a best-effort conflict check, not a transactional multi-writer store; collaborative editing remains out of scope.
 
 Saving is local to the current browser profile and origin. It is not a file download or cloud backup; clearing browser data removes stored texts. Clipboard buttons require browser permission and a secure context (including localhost). Native copy/paste shortcuts remain available in the textarea.
+
+### File transfer and recovery
+
+The host's file reader enforces byte limits before decoding strict UTF-8, retaining a BOM. Downloads use UTF-8 blobs and sanitized filenames, without changing saved or recovery state. Text imports become drafts; JSON exports contain the saved core snapshot only. The core validates JSON imports and host-provided fresh IDs before appending all documents to a candidate workspace. The browser persists that candidate in a single workspace-key write before swapping its active core. ID collisions, invalid data, storage quota failures and stale writers cannot partially import or replace existing documents. Formats and archive flags are preserved; document exceptions are not copied.
+
+Recovery uses independent `quadruple-quotes.draft.v1.*` records with a version, draft document, exact saved base (or null) and host timestamp. The host validates document payloads through the Rust codec. Each write/removal compares its exact inspected raw entry; different tabs create independent records instead of sharing an automatically adopted draft. Invalid/future entries remain intact and can be exported as raw data. Limits are 50 records and 10 MiB per record, subject to browser quota. A 500 ms timer and pagehide/visibility/beforeunload flush reduce loss without promising persistence after abrupt termination. Recovery is explicitly selected; unchanged bases retain their identity, while changed/deleted bases become new active copies. Saving/discarding clears only the active inspected recovery record, and failure to clean it reports that it was kept. Recovery history is not serialized, and the initial Undo stack is empty.
+
+Workspace snapshots, proofreading configuration and recovery records have separate write boundaries. A backup import does not overwrite settings or recovery records. The same best-effort stale-value checks apply; these localStorage operations are not cross-key or multi-writer transactions. Damaged startup storage exposes raw downloads instead of auto-resetting data.
 
 ## Proofreading boundary
 

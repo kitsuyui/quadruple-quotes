@@ -23,6 +23,16 @@ Archive removes a saved text from the active list without losing its contents; *
 
 Storage is scoped to the browser profile and URL origin. Save is local persistence, not a downloaded file or cloud backup. Clearing browser data removes these texts. Save failures keep the draft available, and damaged storage is never silently overwritten. There is no backend to run.
 
+## Files and draft recovery
+
+Open **Files & recovery** to download the current draft as UTF-8 `.txt` or `.md`. Downloading does not save it. **Download workspace JSON** backs up saved texts with their titles, IDs, timestamps, formats and archive flags. It excludes unsaved drafts and proofreading settings.
+
+Choose a UTF-8 `.txt` or `.md` file, review it, and **Open as unsaved text**. Markdown files use Markdown format; other text files use Plain text. Both preserve the original Unicode and whitespace, including a UTF-8 BOM. Changing a document's format is a draft change saved with **Save**. Workspace `.json` files are validated before **Add texts** appends independent copies with new IDs, preserving existing texts and the current draft. Malformed, unsupported, duplicate-ID and over-limit backups are rejected. Limits are 5 MiB per text file and 10 MiB / 1,000 texts for an imported workspace (including the destination total). Imported copies do not inherit document-specific proofreading exceptions.
+
+Unsaved title, body and format changes are recorded in separate browser recovery storage after a 500 ms pause and on page hide. **Recover drafts** lets you choose a draft to continue; recovery never saves its body automatically. If its saved base changed or was deleted, it opens a recovered copy instead. Save or explicitly discard the current draft to clear its recovery copy; other recovery entries remain. Undo history starts fresh after recovery. Storage failures display a warning and keep the draft available for download. Recovery stores up to 50 entries, never overwrites malformed or stale entries, and offers raw recovery downloads for inspection. It shares the browser profile/origin's storage and is not protection against clearing browser data or an abrupt crash before a successful write.
+
+If a damaged workspace prevents startup, **Download raw workspace data** and **Download raw recovery data** preserve the available bytes without clearing or replacing them. Raw recovery downloads are inspection artifacts, not workspace imports.
+
 ## Validate
 
 ```sh

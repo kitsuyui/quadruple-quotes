@@ -22,6 +22,18 @@ impl TextWorkspace {
         self.inner.to_json().map_err(js_error)
     }
 
+    pub fn inspect_import(json: &str) -> Result<String, JsValue> {
+        Workspace::inspect_import(json)
+            .map_err(js_error)?
+            .to_json()
+            .map_err(js_error)
+    }
+
+    pub fn import_json(&mut self, json: &str, new_ids: &str) -> Result<(), JsValue> {
+        let ids: Vec<String> = serde_json::from_str(new_ids).map_err(js_error)?;
+        self.inner.import_json(json, ids).map_err(js_error)
+    }
+
     pub fn save(&mut self, json: &str) -> Result<(), JsValue> {
         let document: Document = serde_json::from_str(json).map_err(js_error)?;
         self.inner.save(document).map_err(js_error)
