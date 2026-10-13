@@ -203,8 +203,12 @@ export function BodyEditor({
 
   function syncScroll() {
     const input = inputRef.current;
-    if (input && content.current)
-      content.current.style.transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`;
+    if (!input || !content.current) return;
+    const transform = `translate(${-input.scrollLeft}px, ${-input.scrollTop}px)`;
+    // Native scroll notifications can arrive after a synchronous mirror update
+    // and a new hover. An unchanged position must not dismiss that new card.
+    if (content.current.style.transform === transform) return;
+    content.current.style.transform = transform;
     invalidate();
   }
 
@@ -238,6 +242,8 @@ export function BodyEditor({
         inputRef.current?.focus();
     };
     const onScroll = (event: Event) => {
+      // The textarea handler owns its mirror movement and position deduplication.
+      if (event.target === inputRef.current) return;
       if (
         event.target instanceof Element &&
         event.target.closest(".diagnostic-tooltip")

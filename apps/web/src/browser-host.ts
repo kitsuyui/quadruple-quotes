@@ -1,7 +1,9 @@
 import { BrowserAnalysisPort } from "./analysis-port";
+import { browserFiles } from "./browser-files";
 import init, { TextWorkspace } from "./generated/quadruple_quotes";
 import wasmUrl from "./generated/quadruple_quotes_bg.wasm?url";
 import type { EditorHost, TextDocument, TextRepository } from "./ports";
+import { BrowserRecoveryStore } from "./recovery";
 
 export const STORAGE_KEY = "quadruple-quotes.workspace.v1";
 
@@ -40,6 +42,18 @@ class BrowserTextRepository implements TextRepository {
     this.commit((next) => next.set_archived(id, archived));
   }
 
+  snapshot(): string {
+    return this.core.snapshot();
+  }
+
+  inspectImport(json: string): TextDocument[] {
+    return JSON.parse(TextWorkspace.inspect_import(json)).documents;
+  }
+
+  importSnapshot(json: string, newIds: string[]) {
+    this.commit((next) => next.import_json(json, JSON.stringify(newIds)));
+  }
+
   dispose(): void {
     this.core.free();
   }
@@ -72,6 +86,19 @@ export async function createBrowserHost(): Promise<EditorHost> {
   return {
     repository: new BrowserTextRepository(window.localStorage),
     analysis: new BrowserAnalysisPort(),
+    files: browserFiles,
+    recovery: new BrowserRecoveryStore(
+      window.localStorage,
+      (document) => {
+        const parsed = JSON.parse(
+          TextWorkspace.inspect_import(
+            JSON.stringify({ schemaVersion: 3, documents: [document] }),
+          ),
+        );
+        return parsed.documents[0];
+      },
+      () => crypto.randomUUID(),
+    ),
     clipboard: {
       readText: () => navigator.clipboard.readText(),
       writeText: (text) => navigator.clipboard.writeText(text),

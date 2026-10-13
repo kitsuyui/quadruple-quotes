@@ -1188,3 +1188,120 @@ button.primary:hover:not(:disabled) {
     transition: none;
   }
 }
+
+.workspace-tools,
+.file-actions,
+.files-section-header,
+.files-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.workspace-tools {
+  justify-content: flex-end;
+}
+.workspace-tools button {
+  font-size: 11px;
+  padding: 7px 10px;
+}
+.files-dialog {
+  width: min(660px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding-top: 0;
+  overflow-wrap: anywhere;
+}
+.files-header {
+  position: sticky;
+  top: 0;
+  background: #fffefb;
+  z-index: 1;
+  justify-content: space-between;
+  padding-block: 20px 12px;
+}
+.files-header h2 {
+  margin: 0;
+}
+.files-dialog section {
+  padding-block: 16px;
+  border-top: 1px solid #e0e4da;
+}
+.files-dialog p {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.file-picker {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+.files-dialog .file-picker input {
+  max-width: 100%;
+  width: 100%;
+}
+.import-preview {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f3f5ed;
+  border-radius: 10px;
+}
+.import-preview button {
+  margin: 4px;
+}
+.files-section-header {
+  justify-content: space-between;
+}
+.recovery-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.files-dialog .recovery-list li {
+  display: grid;
+  gap: 8px;
+  padding-block: 14px;
+  border-bottom: 1px solid #e0e4da;
+}
+.recovery-list li > span {
+  font-size: 11px;
+  color: #737c6b;
+}
+.recovery-list button {
+  white-space: normal;
+  text-align: left;
+  max-width: 100%;
+}
+.recovery-discard {
+  background: #fff4ef;
+  padding: 10px;
+  border-radius: 8px;
+}
+.recovery-warning {
+  position: fixed;
+  bottom: 5px;
+  left: 16px;
+  right: 16px;
+  z-index: 6;
+  padding: 10px;
+  background: #fff4df;
+  border: 1px solid #d9af71;
+  border-radius: 8px;
+  font-size: 12px;
+}
+@media (max-width: 767px) {
+  .topbar {
+    height: auto;
+    min-height: 62px;
+    padding-block: 10px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .workspace-tools .local-badge {
+    display: none;
+  }
+  .files-dialog {
+    padding-inline: 18px;
+  }
+}

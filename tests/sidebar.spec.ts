@@ -89,7 +89,7 @@ test("sidebar archives legacy text, persists it, and restores its exact contents
     (await page.evaluate((key) => localStorage.getItem(key), storageKey)) ??
       "{}",
   );
-  expect(archived.schemaVersion).toBe(2);
+  expect(archived.schemaVersion).toBe(3);
   expect(archived.documents[0].archived).toBe(true);
   expect(archived.documents[0].updatedAt).toBe(100);
   await (await actions(page, "First note"))
@@ -302,10 +302,12 @@ test("duplicate opens an independent copy, preserving exact text and the origina
   expect(snapshot.documents[0]).toEqual({
     ...legacy.documents[0],
     archived: false,
+    format: "text",
   });
   expect(snapshot.documents[1]).toEqual({
     ...legacy.documents[1],
     archived: false,
+    format: "text",
   });
 });
 
@@ -481,6 +483,7 @@ test("mobile keyboard duplication from the archive opens an active copy", async 
   expect(snapshot.documents[0]).toEqual({
     ...legacy.documents[0],
     archived: true,
+    format: "text",
   });
   expect(snapshot.documents[2].archived).toBe(false);
   expect(

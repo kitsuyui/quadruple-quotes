@@ -5,7 +5,9 @@ import "@fontsource/dm-sans/latin-600.css";
 import "@fontsource/manrope/latin-600.css";
 import "@fontsource/manrope/latin-700.css";
 import { App } from "./App";
+import { browserFiles } from "./browser-files";
 import { createBrowserHost } from "./browser-host";
+import { RECOVERY_PREFIX } from "./recovery";
 import "./styles.css";
 
 const element = document.getElementById("root");
@@ -46,6 +48,51 @@ createBrowserHost()
           onClick={() => window.location.reload()}
         >
           Try again
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            try {
+              const raw =
+                window.localStorage.getItem("quadruple-quotes.workspace.v1") ??
+                "";
+              browserFiles.download(
+                "quadruple-quotes-workspace-raw.json",
+                raw,
+                "application/json",
+              );
+            } catch {
+              window.alert(
+                "Browser storage could not be read. Existing data has not been changed.",
+              );
+            }
+          }}
+        >
+          Download raw workspace data
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            try {
+              const records: Record<string, string | null> = {};
+              for (let index = 0; index < window.localStorage.length; index++) {
+                const key = window.localStorage.key(index);
+                if (key?.startsWith(RECOVERY_PREFIX))
+                  records[key] = window.localStorage.getItem(key);
+              }
+              browserFiles.download(
+                "quadruple-quotes-recovery-raw.json",
+                JSON.stringify({ records }, null, 2),
+                "application/json",
+              );
+            } catch {
+              window.alert(
+                "Browser recovery storage could not be read. Existing data has not been changed.",
+              );
+            }
+          }}
+        >
+          Download raw recovery data
         </button>
       </div>,
     );

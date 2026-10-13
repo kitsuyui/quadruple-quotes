@@ -25,9 +25,11 @@ import { BodyEditor } from "./BodyEditor";
 import { type BodyEdit, BodyHistory } from "./body-history";
 import { Confirmation } from "./Confirmation";
 import type { ExceptionAction } from "./DiagnosticExceptionButtons";
+import { FilesAndRecovery } from "./FilesAndRecovery";
 import { Icon } from "./Icon";
 import { ProofreadingPanel } from "./ProofreadingPanel";
-import type { EditorHost, TextDocument } from "./ports";
+import type { EditorHost, RecoveryEntry, TextDocument } from "./ports";
+import { RECOVERY_PREFIX, recoveryDocument } from "./recovery";
 import { TextActions } from "./TextActions";
 
 type Notice = { text: string; error: boolean };
@@ -74,6 +76,13 @@ export function App({ host }: { host: EditorHost }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [proofreadingOpen, setProofreadingOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [recoveryList, setRecoveryList] = useState(() => host.recovery.list());
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const activeRecovery = useRef<RecoveryEntry | null>(null);
+  const recoveryBase = useRef<TextDocument | null>(draft);
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(
     null,
   );
@@ -87,7 +96,7 @@ export function App({ host }: { host: EditorHost }) {
   const [selectionRequest, setSelectionRequest] = useState<Range | null>(null);
   const selectedIssue = useRef<string | null>(null);
   const [issueAnnouncement, setIssueAnnouncement] = useState("");
-  const [format, setFormat] = useState<"text" | "markdown">("text");
+  const format = draft?.format ?? "text";
   const [manualAnalysis, setManualAnalysis] = useState(false);
   const [initialAnalysisSettings] = useState(() =>
     safelyLoadAnalysisSettings(window.localStorage),
@@ -113,7 +122,101 @@ export function App({ host }: { host: EditorHost }) {
   const saved = documents.find((item) => item.id === draft?.id);
   const dirty =
     draft !== null &&
-    (!saved || saved.title !== draft.title || saved.body !== draft.body);
+    (!saved ||
+      saved.title !== draft.title ||
+      saved.body !== draft.body ||
+      (saved.format ?? "text") !== format);
+
+  const refreshRecovery = useCallback(() => {
+    const loaded = host.recovery.list();
+    setRecoveryList({
+      ...loaded,
+      entries: loaded.entries.filter(
+        (entry) => entry.key !== activeRecovery.current?.key,
+      ),
+    });
+  }, [host]);
+
+  const clearRecovery = useCallback(() => {
+    if (activeRecovery.current) host.recovery.remove(activeRecovery.current);
+    activeRecovery.current = null;
+    setRecoveryError(null);
+    refreshRecovery();
+  }, [host, refreshRecovery]);
+
+  function flushRecovery() {
+    const current = draftRef.current;
+    if (!current) return;
+    const original = documentsRef.current.find(
+      (item) => item.id === current.id,
+    );
+    const changed =
+      !original ||
+      original.title !== current.title ||
+      original.body !== current.body ||
+      (original.format ?? "text") !== (current.format ?? "text");
+    try {
+      if (!changed) {
+        if (activeRecovery.current) clearRecovery();
+        return;
+      }
+      activeRecovery.current = host.recovery.write(
+        {
+          schemaVersion: 1,
+          document: current,
+          base: recoveryBase.current,
+          updatedAt: host.now(),
+        },
+        activeRecovery.current,
+      );
+      setRecoveryError(null);
+    } catch (failure) {
+      setRecoveryError(
+        `Draft recovery could not be updated. Keep this tab open or download your draft. ${errorMessage(failure)}`,
+      );
+    }
+  }
+
+  const flushRecoveryRef = useRef(flushRecovery);
+  flushRecoveryRef.current = flushRecovery;
+  useEffect(() => {
+    if (!draft) return;
+    const savedDocument = documents.find((item) => item.id === draft.id);
+    const changed =
+      !savedDocument ||
+      savedDocument.title !== draft.title ||
+      savedDocument.body !== draft.body ||
+      (savedDocument.format ?? "text") !== (draft.format ?? "text");
+    if (!changed) {
+      flushRecoveryRef.current();
+      return;
+    }
+    const timer = window.setTimeout(() => flushRecoveryRef.current(), 500);
+    return () => window.clearTimeout(timer);
+  }, [draft, documents]);
+  useEffect(() => {
+    const flush = () => flushRecoveryRef.current();
+    const hidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    const changed = (event: StorageEvent) => {
+      if (
+        event.storageArea === window.localStorage &&
+        (!event.key || event.key.startsWith(RECOVERY_PREFIX))
+      )
+        refreshRecovery();
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", hidden);
+    window.addEventListener("storage", changed);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", hidden);
+      window.removeEventListener("storage", changed);
+    };
+  }, [refreshRecovery]);
 
   const save = useCallback(() => {
     if (!draft) return true;
@@ -121,7 +224,17 @@ export function App({ host }: { host: EditorHost }) {
       const document = { ...draft, updatedAt: host.now() };
       host.repository.save(document);
       setDocuments(host.repository.list());
+      documentsRef.current = host.repository.list();
+      draftRef.current = document;
+      recoveryBase.current = document;
       setDraft(document);
+      try {
+        clearRecovery();
+      } catch (failure) {
+        setRecoveryError(
+          `Text saved, but its recovery copy was kept. ${errorMessage(failure)}`,
+        );
+      }
       setNotice({ text: "Text saved in this browser.", error: false });
       return true;
     } catch (error) {
@@ -131,7 +244,7 @@ export function App({ host }: { host: EditorHost }) {
       });
       return false;
     }
-  }, [draft, host]);
+  }, [draft, host, clearRecovery]);
 
   useEffect(() => {
     const onUnload = (event: BeforeUnloadEvent) => {
@@ -263,6 +376,9 @@ export function App({ host }: { host: EditorHost }) {
   }
 
   function open(document: TextDocument | null) {
+    activeRecovery.current = null;
+    recoveryBase.current =
+      host.repository.list().find((item) => item.id === document?.id) ?? null;
     bodyHistory.clear();
     composition.current = null;
     setComposing(false);
@@ -287,6 +403,7 @@ export function App({ host }: { host: EditorHost }) {
         body: "",
         updatedAt: host.now(),
         archived: false,
+        format: "text",
       });
     });
   }
@@ -298,12 +415,16 @@ export function App({ host }: { host: EditorHost }) {
     });
   }
 
-  function update(field: "title" | "body", value: string, edit?: BodyEdit) {
+  function update(
+    field: "title" | "body" | "format",
+    value: string,
+    edit?: BodyEdit,
+  ) {
     const current = draftRef.current;
     if (!current || current[field] === value) return;
     if (field === "body" && edit && !composition.current)
       bodyHistory.record(current.body, value, edit);
-    draftRef.current = { ...current, [field]: value };
+    draftRef.current = { ...current, [field]: value } as TextDocument;
     setDraft(draftRef.current);
     if (field === "body") {
       const previousRevision = revisionRef.current;
@@ -324,6 +445,7 @@ export function App({ host }: { host: EditorHost }) {
           : null,
       );
     }
+    if (field === "format") invalidateAnalysis();
     setNotice(null);
   }
 
@@ -404,8 +526,14 @@ export function App({ host }: { host: EditorHost }) {
       const remaining = host.repository.list();
       setDocuments(remaining);
       setPending(null);
-      if (draft?.id === document.id)
+      if (draft?.id === document.id) {
+        try {
+          clearRecovery();
+        } catch (failure) {
+          setRecoveryError(errorMessage(failure));
+        }
         open(inView(remaining, showArchived)[0] ?? null);
+      }
       setNotice({ text: "Text deleted.", error: false });
     } catch (error) {
       setPending(null);
@@ -469,6 +597,45 @@ export function App({ host }: { host: EditorHost }) {
   function requestDuplicate(document: TextDocument) {
     setNotice(null);
     transition(() => duplicate(document.id));
+  }
+
+  function recover(entry: RecoveryEntry) {
+    const available = host.recovery
+      .list()
+      .entries.find((item) => item.key === entry.key);
+    if (available?.raw !== entry.raw)
+      throw new Error("This recovery changed. Refresh the recovery list.");
+    setFilesOpen(false);
+    transition(() => {
+      // Recheck after an unsaved-draft confirmation, since another tab can edit meanwhile.
+      const latest = host.recovery
+        .list()
+        .entries.find((item) => item.key === entry.key);
+      if (latest?.raw !== entry.raw) {
+        setNotice({
+          text: "This recovery changed. Refresh the recovery list.",
+          error: true,
+        });
+        return;
+      }
+      const document = recoveryDocument(
+        entry.record,
+        host.repository
+          .list()
+          .find((item) => item.id === entry.record.document.id),
+        host.createId(),
+      );
+      setShowArchived(document.archived);
+      open(document);
+      activeRecovery.current = entry;
+      recoveryBase.current =
+        host.repository.list().find((item) => item.id === document.id) ?? null;
+      refreshRecovery();
+      setNotice({
+        text: "Draft recovered. Save when you’re ready.",
+        error: false,
+      });
+    });
   }
 
   const archivedCount = documents.filter(
@@ -838,10 +1005,33 @@ export function App({ host }: { host: EditorHost }) {
             <span className="breadcrumb-slash">/</span>
             <strong>{showArchived ? "Archive" : "Texts"}</strong>
           </div>
-          <span className="local-badge">
-            <span className="local-dot" />
-            Local workspace
-          </span>
+          <div className="workspace-tools">
+            <button
+              type="button"
+              disabled={busy || composing || !!pending}
+              onClick={() => {
+                refreshRecovery();
+                setFilesOpen(true);
+              }}
+            >
+              Files & recovery
+            </button>
+            {recoveryList.entries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  refreshRecovery();
+                  setFilesOpen(true);
+                }}
+              >
+                Recover drafts ({recoveryList.entries.length})
+              </button>
+            )}
+            <span className="local-badge">
+              <span className="local-dot" />
+              Local workspace
+            </span>
+          </div>
         </header>
         {draft ? (
           <>
@@ -932,8 +1122,7 @@ export function App({ host }: { host: EditorHost }) {
                   id="text-format"
                   value={format}
                   onChange={(event) => {
-                    setFormat(event.target.value as "text" | "markdown");
-                    invalidateAnalysis();
+                    update("format", event.target.value);
                   }}
                 >
                   <option value="text">Plain text</option>
@@ -1048,7 +1237,8 @@ export function App({ host }: { host: EditorHost }) {
             <footer className="editor-footer">
               <span>
                 {unicodeScalars.toLocaleString()} Unicode scalars
-                <span className="footer-dot">·</span>Plain text
+                <span className="footer-dot">·</span>
+                {format === "markdown" ? "Markdown" : "Plain text"}
               </span>
               <button
                 type="button"
@@ -1138,6 +1328,68 @@ export function App({ host }: { host: EditorHost }) {
           {pending ? null : notice?.text}
         </div>
       </main>
+      {recoveryError && (
+        <div className="recovery-warning" role="alert">
+          {recoveryError}{" "}
+          <button
+            type="button"
+            onClick={() => {
+              refreshRecovery();
+              setFilesOpen(true);
+            }}
+          >
+            Review recovery
+          </button>
+        </div>
+      )}
+      {recoveryList.errors.length > 0 && (
+        <div className="recovery-warning" role="alert">
+          Some recovery data could not be read and has been kept.{" "}
+          <button
+            type="button"
+            onClick={() => {
+              refreshRecovery();
+              setFilesOpen(true);
+            }}
+          >
+            Review recovery
+          </button>
+        </div>
+      )}
+      {filesOpen && (
+        <FilesAndRecovery
+          host={host}
+          draft={draft}
+          entries={recoveryList.entries}
+          errors={recoveryList.errors}
+          disabled={busy || composing || !!pending}
+          onClose={() => setFilesOpen(false)}
+          onRefresh={refreshRecovery}
+          onText={(document) => {
+            setFilesOpen(false);
+            transition(() => {
+              setShowArchived(false);
+              open(document);
+            });
+          }}
+          onWorkspace={(json, count) => {
+            host.repository.importSnapshot(
+              json,
+              Array.from({ length: count }, () => host.createId()),
+            );
+            setDocuments(host.repository.list());
+            setNotice({
+              text: `${count} texts added. Existing texts and your draft were kept.`,
+              error: false,
+            });
+          }}
+          onRecover={recover}
+          onDiscard={(entry) => {
+            host.recovery.remove(entry);
+            refreshRecovery();
+          }}
+        />
+      )}
       <ProofreadingPanel
         open={proofreadingOpen}
         result={currentAnalysis}
@@ -1218,8 +1470,16 @@ export function App({ host }: { host: EditorHost }) {
           onDiscard={() => {
             if (pending.kind === "delete") remove(pending.document);
             else {
-              pending.proceed();
-              setPending(null);
+              try {
+                clearRecovery();
+                pending.proceed();
+                setPending(null);
+              } catch (failure) {
+                setNotice({
+                  text: `Could not discard recovery. Your draft is still here. ${errorMessage(failure)}`,
+                  error: true,
+                });
+              }
             }
           }}
           onSave={() => {
