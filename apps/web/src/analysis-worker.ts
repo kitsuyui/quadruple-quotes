@@ -34,6 +34,100 @@ function isUtf16Boundary(text: string, offset: number) {
   );
 }
 
+function isNonnegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+function validatedDependencies(value: unknown, text: string): unknown[] {
+  if (typeof value !== "object" || value === null)
+    throw new Error("Local parser returned an invalid response.");
+  const payload = value as Record<string, unknown>;
+  if (
+    payload.ok !== true ||
+    !Array.isArray(payload.dependencies) ||
+    payload.dependencies.length > 5000
+  )
+    throw new Error("Local parser did not confirm a successful analysis.");
+  const nodes = payload.dependencies as Array<Record<string, unknown>>;
+  const checked = nodes.every((node) => {
+    const range = node.range as Record<string, unknown> | null;
+    return (
+      isNonnegativeInteger(node.id) &&
+      typeof node.text === "string" &&
+      typeof node.relation === "string" &&
+      isNonnegativeInteger(node.sentence) &&
+      (node.head === null || isNonnegativeInteger(node.head)) &&
+      range !== null &&
+      typeof range === "object" &&
+      isNonnegativeInteger(range.start) &&
+      isNonnegativeInteger(range.end) &&
+      range.start <= range.end &&
+      range.end <= text.length &&
+      isUtf16Boundary(text, range.start) &&
+      isUtf16Boundary(text, range.end) &&
+      text.slice(range.start, range.end) === node.text
+    );
+  });
+  if (!checked)
+    throw new Error("Local parser returned an invalid dependency schema.");
+  const typed = nodes as Array<{
+    id: number;
+    head: number | null;
+    sentence: number;
+  }>;
+  const byId = new Map(typed.map((node) => [node.id, node]));
+  if (byId.size !== typed.length)
+    throw new Error("Local parser returned duplicate dependency IDs.");
+  for (const node of typed) {
+    const head = node.head === null ? undefined : byId.get(node.head);
+    if (
+      node.head !== null &&
+      (!head || head.sentence !== node.sentence || head.id === node.id)
+    )
+      throw new Error("Local parser returned an invalid dependency graph.");
+  }
+  const state = new Map<number, 0 | 1 | 2>();
+  for (const node of typed) {
+    if (state.get(node.id) === 2) continue;
+    const path: typeof typed = [];
+    let current: (typeof typed)[number] | undefined = node;
+    while (current) {
+      const seen = state.get(current.id) ?? 0;
+      if (seen === 1)
+        throw new Error("Local parser returned a cyclic dependency graph.");
+      if (seen === 2 || current.head === null) break;
+      state.set(current.id, 1);
+      path.push(current);
+      current = byId.get(current.head);
+    }
+    for (const item of path) state.set(item.id, 2);
+  }
+  return payload.dependencies;
+}
+export function dependencyAdvisories(dependencies: unknown[]): Diagnostic[] {
+  const nodes = dependencies as Array<{
+    id: number;
+    head: number | null;
+    range: { start: number; end: number };
+  }>;
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.flatMap((node) => {
+    const head = node.head === null ? undefined : byId.get(node.head);
+    const distance = head && Math.abs(node.range.start - head.range.start);
+    return distance === undefined || distance < 24
+      ? []
+      : [
+          {
+            pluginId: "ginza",
+            ruleId: "ginza.long-dependency",
+            message: `Dependency spans ${distance} UTF-16 units; review the connected tokens in context.`,
+            severity: "info" as const,
+            invalidationScope: "sentence" as const,
+            range: node.range,
+          },
+        ];
+  });
+}
+
 async function load() {
   const module = await import("./generated-analysis/quadruple_quotes_analysis");
   const wasmUrl = new URL(
@@ -79,17 +173,11 @@ async function dependencies(request: AnalysisRequest) {
         `Local parser returned ${response.status}. Start the GiNZA analysis host.`,
       );
     const payload: unknown = await response.json();
-    if (
-      typeof payload !== "object" ||
-      payload === null ||
-      (payload as { ok?: unknown }).ok !== true ||
-      !Array.isArray((payload as { dependencies?: unknown }).dependencies)
-    )
-      throw new Error("Local parser did not confirm a successful analysis.");
+    const dependencies = validatedDependencies(payload, request.text);
     return {
       documentId: request.documentId,
       revision: request.revision,
-      dependencies: (payload as { dependencies: [] }).dependencies,
+      dependencies,
       status: { pluginId: "ginza", status: "ok" as const },
     };
   } catch (error) {

@@ -357,6 +357,10 @@ export function App({ host }: { host: EditorHost }) {
                   ? {
                       ...result,
                       dependencies: dependency.dependencies,
+                      diagnostics: [
+                        ...result.diagnostics,
+                        ...dependency.diagnostics,
+                      ],
                       statuses: [...result.statuses, dependency.status],
                     }
                   : result;
@@ -367,15 +371,24 @@ export function App({ host }: { host: EditorHost }) {
                 ? {
                     ...result,
                     dependencies: current.dependencies,
+                    diagnostics: [
+                      ...result.diagnostics,
+                      ...(dependencyResultRef.current?.diagnostics ?? []),
+                    ],
                     statuses: [...result.statuses, ginza],
                   }
                 : result;
             });
+            const dependency = dependencyResultRef.current;
             setDiagnosticDisplay({
               documentId,
               analyzedRevision: expectedRevision,
               revision: expectedRevision,
-              diagnostics: result.diagnostics,
+              diagnostics:
+                dependency?.documentId === documentId &&
+                dependency.revision === expectedRevision
+                  ? [...result.diagnostics, ...dependency.diagnostics]
+                  : result.diagnostics,
             });
           }
         })
@@ -445,6 +458,21 @@ export function App({ host }: { host: EditorHost }) {
           )
             return;
           dependencyResultRef.current = dependencyResult;
+          setDiagnosticDisplay((current) =>
+            current &&
+            current.documentId === documentId &&
+            current.analyzedRevision === expectedRevision
+              ? {
+                  ...current,
+                  diagnostics: [
+                    ...current.diagnostics.filter(
+                      (item) => item.ruleId !== "ginza.long-dependency",
+                    ),
+                    ...dependencyResult.diagnostics,
+                  ],
+                }
+              : current,
+          );
           setAnalysisResult((current) => {
             if (
               !current ||
@@ -455,6 +483,12 @@ export function App({ host }: { host: EditorHost }) {
             return {
               ...current,
               dependencies: dependencyResult.dependencies,
+              diagnostics: [
+                ...current.diagnostics.filter(
+                  (item) => item.ruleId !== "ginza.long-dependency",
+                ),
+                ...dependencyResult.diagnostics,
+              ],
               statuses: [
                 ...current.statuses.filter(
                   (status) => status.pluginId !== "ginza",

@@ -53,6 +53,9 @@ export function ProofreadingPanel({
   onJapaneseStyle(): void;
 }) {
   const [filter, setFilter] = useState("");
+  const [selectedDependency, setSelectedDependency] = useState<number | null>(
+    null,
+  );
   useEffect(() => {
     if (!open) {
       setFilter("");
@@ -68,6 +71,27 @@ export function ProofreadingPanel({
     .slice(0, 50);
   const dependencies = result?.dependencies ?? [];
   const dependencyById = new Map(dependencies.map((node) => [node.id, node]));
+  // Rust core applies rule severity and document exceptions before this UI sees
+  // an advisory. The parser graph only supplies token relationships.
+  const dependencyAdvisories = (result?.diagnostics ?? []).flatMap(
+    (diagnostic) => {
+      if (diagnostic.ruleId !== "ginza.long-dependency") return [];
+      const node = dependencies.find(
+        (candidate) =>
+          candidate.range.start === diagnostic.range.start &&
+          candidate.range.end === diagnostic.range.end,
+      );
+      const head =
+        node?.head === null ? undefined : dependencyById.get(node?.head ?? -1);
+      return node && head ? [{ node, head }] : [];
+    },
+  );
+  const selectDependency = (id: number) => {
+    const node = dependencyById.get(id);
+    if (!node) return;
+    setSelectedDependency(id);
+    onSelect(node.range.start, node.range.end);
+  };
   return (
     <aside className="proofreading-panel" aria-label="Proofreading">
       <header>
@@ -159,37 +183,86 @@ export function ProofreadingPanel({
         </button>
       )}
       {dependencies.length ? (
-        <table className="dependency-table">
-          <thead>
-            <tr>
-              <th>Token</th>
-              <th>Head</th>
-              <th>Relation</th>
-              <th>Sentence</th>
-            </tr>
-          </thead>
-          <tbody>
-            {dependencies.slice(0, 200).map((node) => (
-              <tr key={node.id}>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(node.range.start, node.range.end)}
-                  >
-                    {node.text}
-                  </button>
-                </td>
-                <td>
-                  {node.head === null
-                    ? "—"
-                    : (dependencyById.get(node.head)?.text ?? node.head)}
-                </td>
-                <td>{node.relation}</td>
-                <td>{node.sentence + 1}</td>
+        <>
+          {dependencyAdvisories.length > 0 && (
+            <section
+              className="dependency-advisories"
+              aria-label="Dependency advisories"
+            >
+              <strong>Dependency inspection cues</strong>
+              <p>
+                These are not grammar errors. Review the connected tokens in
+                context.
+              </p>
+              <ul>
+                {dependencyAdvisories.slice(0, 20).map(({ node, head }) => (
+                  <li key={`advisory-${node.id}`}>
+                    <button
+                      type="button"
+                      onClick={() => selectDependency(node.id)}
+                    >
+                      {node.text}
+                    </button>
+                    {" → "}
+                    <button
+                      type="button"
+                      onClick={() => selectDependency(head.id)}
+                    >
+                      {head.text}
+                    </button>
+                    {` (${node.relation}; ${Math.abs(node.range.start - head.range.start)} UTF-16 units apart)`}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <table className="dependency-table">
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th>Head</th>
+                <th>Relation</th>
+                <th>Sentence</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {dependencies.slice(0, 200).map((node) => (
+                <tr
+                  key={node.id}
+                  className={
+                    selectedDependency === node.id ||
+                    node.head === selectedDependency
+                      ? "dependency-selected"
+                      : undefined
+                  }
+                >
+                  <td>
+                    <button
+                      type="button"
+                      onClick={() => selectDependency(node.id)}
+                    >
+                      {node.text}
+                    </button>
+                  </td>
+                  <td>
+                    {node.head === null ? (
+                      "—"
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => selectDependency(node.head!)}
+                      >
+                        {dependencyById.get(node.head)?.text ?? node.head}
+                      </button>
+                    )}
+                  </td>
+                  <td>{node.relation}</td>
+                  <td>{node.sentence + 1}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       ) : null}
       {dependencies.length > 200 ? (
         <p>{dependencies.length - 200} more dependencies are not shown.</p>

@@ -1,0 +1,3 @@
+{"text":"短い許容例。","expectedAdvisory":[]}
+{"text":"長い修飾語句が離れた中心語へ続く文章です。","expectedAdvisory":[0]}
+{"text":"😀 emoji と CRLF\r\n二文目を確認する。","expectedAdvisory":[]}

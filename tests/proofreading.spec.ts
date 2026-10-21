@@ -691,6 +691,152 @@ test("GiNZA stays offline until an enabled user-requested manual run and its res
     .toBe("文章");
 });
 
+test("dependency heads and dependents select from keyboard or click and stale rows clear on edit", async ({
+  page,
+}) => {
+  const body = "dependent........................head";
+  const headStart = body.indexOf("head");
+  let requests = 0;
+  await page.route("**/api/dependencies", async (route) => {
+    requests += 1;
+    if (requests > 3) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, dependencies: [] }),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        dependencies: [
+          {
+            id: 0,
+            text: "dependent",
+            range: { start: 0, end: 9 },
+            head: 1,
+            relation: "dep",
+            sentence: 0,
+          },
+          {
+            id: 1,
+            text: "head",
+            range: { start: headStart, end: headStart + 4 },
+            head: null,
+            relation: "root",
+            sentence: 0,
+          },
+        ],
+      }),
+    });
+  });
+  await createText(page, "Dependency controls", body);
+  await openProofreading(page);
+  await page.getByText("Rules and plugins", { exact: true }).click();
+  await expandPlugin(page, "Japanese dependencies");
+  await page
+    .getByRole("checkbox", { name: "Japanese dependencies", exact: true })
+    .check();
+  await page
+    .getByRole("checkbox", { name: "Long dependency", exact: true })
+    .check();
+  await page
+    .getByRole("button", { name: "Run dependency analysis", exact: true })
+    .click();
+  await expect(page.locator(".dependency-table")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /ginza · ginza.long-dependency/ }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Severity for Long dependency", { exact: true })
+    .selectOption("error");
+  await page
+    .getByRole("button", { name: "Run dependency analysis", exact: true })
+    .click();
+  await expect(page.locator(".inline-error")).toHaveText("dependent");
+  await page
+    .locator(".analysis-issues li")
+    .filter({ hasText: "ginza.long-dependency" })
+    .getByRole("button", { name: "Ignore rule in this document" })
+    .click();
+  await page
+    .getByRole("button", { name: "Run dependency analysis", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /ginza · ginza.long-dependency/ }),
+  ).toHaveCount(0);
+  await expect(page.locator(".dependency-advisories")).toHaveCount(0);
+  const dependent = page
+    .locator(".dependency-table")
+    .getByRole("button", { name: "dependent", exact: true });
+  await dependent.focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() =>
+      page
+        .getByLabel("Text body", { exact: true })
+        .evaluate((input: HTMLTextAreaElement) =>
+          input.value.slice(input.selectionStart, input.selectionEnd),
+        ),
+    )
+    .toBe("dependent");
+  await page
+    .locator(".dependency-table tbody tr")
+    .first()
+    .getByRole("button", { name: "head", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page
+        .getByLabel("Text body", { exact: true })
+        .evaluate((input: HTMLTextAreaElement) =>
+          input.value.slice(input.selectionStart, input.selectionEnd),
+        ),
+    )
+    .toBe("head");
+  await page.getByLabel("Text body", { exact: true }).fill("edited text");
+  await expect(page.locator(".dependency-table")).toHaveCount(0);
+});
+
+test("malformed dependency graphs are shown as errors without rendering rows", async ({
+  page,
+}) => {
+  await page.route("**/api/dependencies", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        dependencies: [
+          {
+            id: 0,
+            text: "文章",
+            range: { start: 0, end: 2 },
+            head: 0,
+            relation: "root",
+            sentence: 0,
+          },
+        ],
+      }),
+    });
+  });
+  await createText(page, "Malformed graph", "文章です。");
+  await openProofreading(page);
+  await page.getByText("Rules and plugins", { exact: true }).click();
+  await expandPlugin(page, "Japanese dependencies");
+  await page
+    .getByRole("checkbox", { name: "Japanese dependencies", exact: true })
+    .check();
+  await page
+    .getByRole("button", { name: "Run dependency analysis", exact: true })
+    .click();
+  await expect(page.getByRole("list", { name: "Plugin status" })).toContainText(
+    "ginza: error",
+  );
+  await expect(page.locator(".dependency-table")).toHaveCount(0);
+});
+
 test("an over-limit text retains full metrics while every realtime analyzer is skipped", async ({
   page,
 }) => {

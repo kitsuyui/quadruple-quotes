@@ -269,12 +269,81 @@ test("cancel and dispose reject every outstanding lane request", async () => {
   });
   const realtime = port.analyze(request);
   const dependency = port.analyzeDependencies(request);
+  const dependencyOutcome = dependency.then(
+    () => undefined,
+    (error) => error,
+  );
   await Promise.resolve();
   port.cancel();
   await expect(realtime).rejects.toThrow("superseded");
   port.dispose();
-  await expect(dependency).rejects.toThrow("disposed");
+  await expect(dependencyOutcome).resolves.toMatchObject({
+    message: "Dependency analysis was superseded.",
+  });
   expect(workers.every((worker) => worker.terminated)).toBe(true);
+});
+
+test("a rejected dependency run clears manual state so a retry can complete", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (
+      lane === "GiNZA" &&
+      !workers.some((item) => item.posted[0]?.kind === "dependencies")
+    )
+      worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const failed = port.analyzeDependencies(request);
+  await Promise.resolve();
+  const first = workers.find(
+    (worker) => worker.posted[0]?.kind === "dependencies",
+  );
+  if (!first) throw new Error("GiNZA lane was not created.");
+  first.fail("dependency failed");
+  await expect(failed).rejects.toThrow(
+    "GiNZA worker failed: dependency failed",
+  );
+  await expect(port.analyzeDependencies(request)).resolves.toMatchObject({
+    documentId: "doc",
+    revision: 1,
+  });
+  port.dispose();
+});
+
+test("a changed snapshot cancels dependency work before it can reach core", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (lane === "GiNZA") worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const manual = port.analyzeDependencies(request);
+  await Promise.resolve();
+  const dependency = workers.find(
+    (worker) => worker.posted[0]?.kind === "dependencies",
+  );
+  if (!dependency) throw new Error("GiNZA lane was not created.");
+  const realtime = port.analyze({ ...request, revision: 2 });
+  await expect(manual).rejects.toThrow("superseded");
+  expect(dependency.terminated).toBe(true);
+  dependency.emit({
+    id: dependency.posted[0]?.id,
+    ok: true,
+    dependencies: {
+      documentId: "doc",
+      revision: 1,
+      dependencies: [],
+      status: { pluginId: "ginza", status: "ok" },
+    },
+  });
+  await expect(realtime).resolves.toMatchObject({ revision: 2 });
+  expect(
+    workers.filter((worker) => worker.posted[0]?.kind === "core"),
+  ).toHaveLength(1);
+  port.dispose();
 });
 
 test("recovers catalog lifecycle after a worker error", async () => {
