@@ -2,8 +2,12 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 
 let port: number;
 let server: Bun.Subprocess | undefined;
-const request = (body: unknown, init: RequestInit = {}) =>
-  fetch(`http://127.0.0.1:${port}/api/dependencies`, {
+const request = (
+  body: unknown,
+  init: RequestInit = {},
+  path = "/api/dependencies",
+) =>
+  fetch(`http://127.0.0.1:${port}${path}`, {
     ...init,
     method: "POST",
     headers: { "content-type": "application/json", ...(init.headers ?? {}) },
@@ -128,4 +132,58 @@ test("bounds an unterminated parser output frame and respawns", async () => {
   expect((await request({ text: "huge-output" })).status).toBe(502);
   await Bun.sleep(25);
   expect((await request({ text: "after-huge-output" })).status).toBe(200);
+});
+
+test("bounds and validates local Japanese style requests independently", async () => {
+  const valid = await request(
+    {
+      text: "これはこれはテストです。",
+      format: "text",
+      rules: ["no-doubled-joshi"],
+    },
+    {},
+    "/api/japanese-style",
+  );
+  expect(valid.status).toBe(200);
+  expect((await valid.json()).diagnostics).toHaveLength(1);
+  expect(
+    (
+      await request(
+        { text: "x", format: "html", rules: ["no-doubled-joshi"] },
+        {},
+        "/api/japanese-style",
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await request(
+        { text: "x", format: "text", rules: ["untrusted"] },
+        {},
+        "/api/japanese-style",
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await request(
+        {
+          text: "😀".repeat(2501),
+          format: "text",
+          rules: ["no-doubled-joshi"],
+        },
+        {},
+        "/api/japanese-style",
+      )
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await request(
+        { text: "x", format: "markdown", rules: [] },
+        { headers: { origin: "https://example.invalid" } },
+        "/api/japanese-style",
+      )
+    ).status,
+  ).toBe(403);
 });

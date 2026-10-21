@@ -13,7 +13,7 @@
     "format": "cargo fmt --all && biome check --write .",
     "lint": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && biome check .",
     "test": "cargo test --workspace",
-    "test:unit": "bun test tests/analysis-port.test.ts tests/analysis-settings.test.ts tests/native-host.test.ts tests/inline-diagnostics.test.ts tests/diagnostic-tracking.test.ts tests/proofreading-actions.test.ts tests/recovery.test.ts",
+    "test:unit": "bun test tests/analysis-port.test.ts tests/analysis-settings.test.ts tests/native-host.test.ts tests/japanese-style.test.ts tests/inline-diagnostics.test.ts tests/diagnostic-tracking.test.ts tests/proofreading-actions.test.ts tests/recovery.test.ts",
     "test:e2e": "playwright test",
     "check": "bun run lint && bun run test && bun run test:unit && bun run build && bun run test:e2e"
   },
@@ -22,6 +22,7 @@
     "@fontsource/manrope": "^5.3.0",
     "@textlint-ja/textlint-rule-preset-ai-writing": "1.7.0",
     "@textlint-rule/textlint-rule-no-invalid-control-character": "3.0.0",
+    "@textlint-rule/textlint-rule-no-unmatched-pair": "2.0.4",
     "@textlint/kernel": "15.8.0",
     "@textlint/module-interop": "15.8.0",
     "@textlint/textlint-plugin-markdown": "15.8.0",
@@ -30,7 +31,11 @@
     "markdownlint": "0.41.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "textlint-rule-ja-no-abusage": "3.0.0",
     "textlint-rule-ja-no-mixed-period": "3.0.2",
+    "textlint-rule-ja-no-redundant-expression": "4.0.1",
+    "textlint-rule-no-doubled-joshi": "5.1.1",
+    "textlint-rule-no-mix-dearu-desumasu": "6.0.4",
     "textlint-rule-no-nfd": "2.0.1",
     "textlint-rule-sentence-length": "5.2.1"
   },

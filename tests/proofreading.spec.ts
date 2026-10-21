@@ -359,6 +359,77 @@ test("manual GiNZA reports failed and malformed local responses without backgrou
   expect(requests).toBe(3);
 });
 
+test("manual Japanese style analysis uses its own endpoint and respects document exclusions", async ({
+  page,
+}) => {
+  let japaneseRequests = 0;
+  let dependencyRequests = 0;
+  await page.route("**/api/japanese-style", async (route) => {
+    japaneseRequests += 1;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        diagnostics: [
+          {
+            ruleId: "no-doubled-joshi",
+            message: "Repeated particle",
+            range: { start: 2, end: 3 },
+          },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/dependencies", async (route) => {
+    dependencyRequests += 1;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, dependencies: [] }),
+    });
+  });
+  await createText(page, "Manual Japanese", "😀これはこれは文です。");
+  await openProofreading(page);
+  await page.getByText("Rules and plugins", { exact: true }).click();
+  await expandPlugin(page, "Japanese morphology");
+  await page
+    .getByRole("checkbox", { name: "Japanese morphology", exact: true })
+    .check();
+  await page
+    .getByRole("checkbox", { name: "Repeated particles", exact: true })
+    .check();
+  await expandPlugin(page, "Japanese dependencies");
+  await page
+    .getByRole("checkbox", { name: "Japanese dependencies", exact: true })
+    .check();
+  await page.waitForTimeout(700);
+  const japanese = page.getByRole("button", {
+    name: /Run local Japanese style analysis/,
+  });
+  const dependencies = page.getByRole("button", {
+    name: "Run dependency analysis",
+    exact: true,
+  });
+  await japanese.click();
+  await expect(
+    page.getByRole("button", {
+      name: /textlint-ja-morphology · textlint-ja\.no-doubled-joshi/,
+    }),
+  ).toContainText("Repeated particle");
+  expect(japaneseRequests).toBe(1);
+  expect(dependencyRequests).toBe(0);
+  await dependencies.click();
+  await expect.poll(() => dependencyRequests).toBe(1);
+  expect(japaneseRequests).toBe(1);
+  await page
+    .getByRole("button", { name: "Ignore rule in this document", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: /textlint-ja-morphology · textlint-ja\.no-doubled-joshi/,
+    }),
+  ).toHaveCount(0);
+});
+
 test("a superseded same-text GiNZA run keeps the latest dependency graph and realtime checks", async ({
   page,
 }) => {

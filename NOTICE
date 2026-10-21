@@ -1,0 +1,11 @@
+Third-party notices
+
+Japanese morphology checks use kuromojin (MIT) and kuromoji (Apache-2.0).
+kuromoji bundles the mecab-ipadic-2.7.0-20070801 dictionary data. Its upstream
+NOTICE.md requires retention of the NAIST copyright notice and warranty
+disclaimer, and also retains the ICOT Free Software no-warranty condition; it
+is not identified there as BSD-3-Clause. The upstream notice is available at
+https://github.com/takuyaa/kuromoji.js/blob/master/NOTICE.md.
+
+These packages run only in the local analysis-host process. Their dictionary
+files are not bundled into the browser build.

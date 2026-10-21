@@ -34,3 +34,9 @@ input UTF-16 and UTF-8 counts, worker creations, settings, and outcomes to
 fresh port; each warm series primes one port and then records eleven requests
 on that same port. The script builds a benchmark-only Vite entry, starts a
 temporary localhost preview server, and closes it in `finally`.
+
+## Local Japanese style checks
+
+The browser keeps bracket matching lightweight and disabled by default. Four morphology-backed rules are also disabled by default and run only after an explicit manual request: mixed です・ます/である style, doubled particles, redundant expressions, and common misuse dictionaries. The local helper accepts plain text and Markdown; Markdown code blocks and block quotes are excluded by the Markdown parser.
+
+The helper is limited to 5,000 UTF-16 units, five seconds, and 200 diagnostics. It accepts only those fixed rule identifiers and returns UTF-16 ranges. It listens on loopback and permits configured browser origins; requests without an Origin header are intentionally supported for local command-line diagnostics. Browser UI support is available through the local analysis host; future desktop hosts must declare the capability before enabling it.

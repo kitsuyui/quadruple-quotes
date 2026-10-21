@@ -166,14 +166,14 @@ test("catalog and realtime analysis use independent lanes in either order", asyn
     const analysis = port.analyze(request);
     const concurrentCatalog = catalog ?? port.catalog();
     if (catalogFirst) {
-      await expect(concurrentCatalog).resolves.toHaveLength(4);
+      await expect(concurrentCatalog).resolves.toHaveLength(5);
       await expect(analysis).resolves.toMatchObject({ documentId: "doc" });
     } else {
       await expect(analysis).resolves.toMatchObject({ documentId: "doc" });
-      await expect(concurrentCatalog).resolves.toHaveLength(4);
+      await expect(concurrentCatalog).resolves.toHaveLength(5);
     }
     const created = workers.length;
-    await expect(port.catalog()).resolves.toHaveLength(4);
+    await expect(port.catalog()).resolves.toHaveLength(5);
     expect(workers).toHaveLength(created);
     expect(workers.some((worker) => worker.terminated)).toBe(true);
     port.dispose();
@@ -199,10 +199,10 @@ test("catalog survives realtime cancellation and keeps its successful cache", as
     ok: true,
     catalog: [],
   });
-  await expect(first).resolves.toHaveLength(4);
+  await expect(first).resolves.toHaveLength(5);
   const count = workers.length;
   port.cancel();
-  await expect(port.catalog()).resolves.toHaveLength(4);
+  await expect(port.catalog()).resolves.toHaveLength(5);
   expect(workers).toHaveLength(count);
   port.dispose();
 });
@@ -294,6 +294,128 @@ test("recovers catalog lifecycle after a worker error", async () => {
   if (!replacement)
     throw new Error("Catalog did not create a replacement worker.");
   replacement.respond = true;
-  await expect(recovered).resolves.toHaveLength(4);
+  await expect(recovered).resolves.toHaveLength(5);
+  port.dispose();
+});
+
+function japaneseReply(worker: FakeWorker, request: AnalysisRequest) {
+  worker.emit({
+    id: worker.posted[0]?.id,
+    ok: true,
+    japaneseStyle: {
+      documentId: request.documentId,
+      revision: request.revision,
+      diagnostics: [],
+      status: { pluginId: "textlint-ja-morphology", status: "ok" },
+    },
+  });
+}
+
+test("a late Japanese result cannot replace a newer realtime analysis", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (lane === "Japanese style") worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const manual = port.analyzeJapaneseStyle(request);
+  await Promise.resolve();
+  const japanese = workers.find(
+    (worker) => worker.posted[0]?.kind === "japanese-style",
+  );
+  if (!japanese) throw new Error("Japanese lane was not created.");
+  const realtime = port.analyze({ ...request, revision: 2 });
+  await expect(manual).rejects.toThrow("superseded");
+  expect(japanese.terminated).toBe(true);
+  japaneseReply(japanese, request);
+  await expect(realtime).resolves.toMatchObject({ revision: 2 });
+  expect(
+    workers.filter((worker) => worker.posted[0]?.kind === "core"),
+  ).toHaveLength(1);
+  port.dispose();
+});
+
+test("a matching realtime snapshot does not supersede Japanese style analysis", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (lane === "Japanese style") worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const manual = port.analyzeJapaneseStyle(request);
+  await Promise.resolve();
+  const japanese = workers.find(
+    (worker) => worker.posted[0]?.kind === "japanese-style",
+  );
+  if (!japanese) throw new Error("Japanese lane was not created.");
+  const realtime = port.analyze(request);
+  japaneseReply(japanese, request);
+  await expect(realtime).resolves.toMatchObject({ revision: 1 });
+  await expect(manual).resolves.toMatchObject({
+    documentId: "doc",
+    revision: 1,
+  });
+  port.dispose();
+});
+
+test("cancel rejects pending Japanese style work without starting a core worker", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (lane === "Japanese style") worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const manual = port.analyzeJapaneseStyle(request);
+  await Promise.resolve();
+  port.cancel();
+  await expect(manual).rejects.toThrow("superseded");
+  expect(workers).toHaveLength(1);
+  expect(workers[0]?.terminated).toBe(true);
+  port.dispose();
+});
+
+test("dispose rejects pending Japanese style work and never recreates a worker", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (lane === "Japanese style") worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const manual = port.analyzeJapaneseStyle(request);
+  await Promise.resolve();
+  const japanese = workers[0];
+  if (!japanese) throw new Error("Japanese lane was not created.");
+  port.dispose();
+  japaneseReply(japanese, request);
+  await expect(manual).rejects.toThrow("disposed");
+  expect(workers).toHaveLength(1);
+});
+
+test("a same-text Japanese retry rejects the old request and uses only the new result", async () => {
+  const workers: FakeWorker[] = [];
+  const port = new BrowserAnalysisPort((lane) => {
+    const worker = new FakeWorker();
+    if (lane === "Japanese style") worker.respond = false;
+    workers.push(worker);
+    return worker as unknown as Worker;
+  });
+  const first = port.analyzeJapaneseStyle(request);
+  await Promise.resolve();
+  const second = port.analyzeJapaneseStyle(request);
+  await expect(first).rejects.toThrow("superseded");
+  const current = workers.at(-1);
+  if (!current) throw new Error("Japanese retry did not create a worker.");
+  japaneseReply(current, request);
+  await expect(second).resolves.toMatchObject({
+    documentId: "doc",
+    revision: 1,
+  });
+  expect(
+    workers.filter((worker) => worker.posted[0]?.kind === "japanese-style"),
+  ).toHaveLength(2);
   port.dispose();
 });

@@ -31,12 +31,20 @@ export default defineConfig({
         target: `http://127.0.0.1:${process.env.ANALYSIS_HOST_PORT ?? 4180}`,
         changeOrigin: true,
       },
+      "/api/japanese-style": {
+        target: `http://127.0.0.1:${process.env.ANALYSIS_HOST_PORT ?? 4180}`,
+        changeOrigin: true,
+      },
     },
   },
   preview: {
     host: "127.0.0.1",
     proxy: {
       "/api/dependencies": {
+        target: `http://127.0.0.1:${process.env.ANALYSIS_HOST_PORT ?? 4180}`,
+        changeOrigin: true,
+      },
+      "/api/japanese-style": {
         target: `http://127.0.0.1:${process.env.ANALYSIS_HOST_PORT ?? 4180}`,
         changeOrigin: true,
       },

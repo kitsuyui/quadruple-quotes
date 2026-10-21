@@ -80,6 +80,46 @@ export const TRUSTED_ADAPTER_CATALOG: PluginDescriptor[] = [
         description: "Flags sentences longer than 100 characters.",
         defaultEnabled: false,
       },
+      {
+        id: "textlint-ja.no-unmatched-pair",
+        name: "Matched pairs",
+        description: "Flags unmatched Japanese brackets and quotation marks.",
+        defaultEnabled: false,
+      },
+    ],
+  },
+  {
+    id: "textlint-ja-morphology",
+    name: "Japanese morphology",
+    description:
+      "Optional local-only Japanese style checks. Runs only after an explicit request.",
+    defaultEnabled: false,
+    runPolicy: "manual",
+    rules: [
+      {
+        id: "textlint-ja.no-mix-dearu-desumasu",
+        name: "Consistent Japanese style",
+        description: "Flags mixed です・ます and である styles locally.",
+        defaultEnabled: false,
+      },
+      {
+        id: "textlint-ja.no-doubled-joshi",
+        name: "Repeated particles",
+        description: "Flags repeated Japanese particles locally.",
+        defaultEnabled: false,
+      },
+      {
+        id: "textlint-ja.no-redundant-expression",
+        name: "Redundant expressions",
+        description: "Flags redundant Japanese expressions locally.",
+        defaultEnabled: false,
+      },
+      {
+        id: "textlint-ja.no-abusage",
+        name: "Common misuses",
+        description: "Flags fixed-dictionary Japanese usage mistakes locally.",
+        defaultEnabled: false,
+      },
     ],
   },
   {
@@ -203,7 +243,7 @@ export async function runTrustedAdapters(
           typeof value === "object" &&
           value !== null &&
           "default" in value &&
-          Object.keys(value).length === 1
+          (value as { default: unknown }).default !== value
         )
           value = (value as { default: unknown }).default;
         return value;
@@ -214,6 +254,7 @@ export async function runTrustedAdapters(
         nfdModule,
         mixedPeriodModule,
         sentenceLengthModule,
+        unmatchedPairModule,
         hypeModule,
       ] = await Promise.all([
         textlintEnabled &&
@@ -231,6 +272,10 @@ export async function runTrustedAdapters(
         textlintEnabled &&
         request.settings.rules["textlint-ja.sentence-length"] === true
           ? import("textlint-rule-sentence-length")
+          : Promise.resolve(undefined),
+        textlintEnabled &&
+        request.settings.rules["textlint-ja.no-unmatched-pair"] === true
+          ? import("@textlint-rule/textlint-rule-no-unmatched-pair")
           : Promise.resolve(undefined),
         aiEnabled
           ? import(
@@ -263,6 +308,14 @@ export async function runTrustedAdapters(
                   options: { max: 100 },
                 },
               ]),
+          ...(!unmatchedPairModule
+            ? []
+            : [
+                {
+                  ruleId: "no-unmatched-pair",
+                  rule: rule(unmatchedPairModule),
+                },
+              ]),
           ...(!hypeModule ? [] : [{ ruleId: "hype", rule: rule(hypeModule) }]),
         ],
       });
@@ -283,10 +336,23 @@ export async function runTrustedAdapters(
                 : issue.severity === 2
                   ? "error"
                   : "warning",
-          range: { start: issue.range[0], end: issue.range[1] },
+          // Textlint ranges are normally zero-based and half-open. The
+          // unmatched-pair rule reports one-based boundaries instead.
+          range: {
+            start:
+              issue.ruleId === "no-unmatched-pair"
+                ? Math.max(0, issue.range[0] - 1)
+                : issue.range[0],
+            end:
+              issue.ruleId === "no-unmatched-pair"
+                ? Math.max(0, issue.range[1] - 1)
+                : issue.range[1],
+          },
           // Markdown parser context and mixed-period checks can affect distant text.
           invalidationScope:
-            request.format === "markdown" || issue.ruleId === "mixed-period"
+            request.format === "markdown" ||
+            issue.ruleId === "mixed-period" ||
+            issue.ruleId === "no-unmatched-pair"
               ? "document"
               : issue.ruleId === "invalid-control"
                 ? "range"
