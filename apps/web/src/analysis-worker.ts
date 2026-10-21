@@ -1,8 +1,9 @@
-import type { AnalysisRequest } from "../../../packages/analysis/src/types";
-import {
-  runTrustedAdapters,
-  TRUSTED_ADAPTER_CATALOG,
-} from "./trusted-adapters";
+import type {
+  AnalysisRequest,
+  AnalysisResult,
+  Diagnostic,
+  PluginStatus,
+} from "../../../packages/analysis/src/types";
 
 type AnalysisWasm = {
   analyze_text(request: string): string;
@@ -10,36 +11,12 @@ type AnalysisWasm = {
   resolve_analysis_settings(request: string): string;
   apply_diagnostic_settings(request: string): string;
 };
-
+type CorePayload = {
+  result: AnalysisResult;
+  effectiveSettings: AnalysisRequest["settings"];
+};
 let ready: Promise<AnalysisWasm> | null = null;
 
-function isDependency(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  const dependency = value as Record<string, unknown>;
-  if (
-    typeof dependency.id !== "number" ||
-    typeof dependency.text !== "string" ||
-    typeof dependency.relation !== "string" ||
-    typeof dependency.sentence !== "number" ||
-    (dependency.head !== null && typeof dependency.head !== "number")
-  )
-    return false;
-  if (typeof dependency.range !== "object" || dependency.range === null)
-    return false;
-  const range = dependency.range as Record<string, unknown>;
-  return typeof range.start === "number" && typeof range.end === "number";
-}
-
-function dependencyPayload(value: unknown): { dependencies: unknown[] } {
-  if (typeof value !== "object" || value === null)
-    throw new Error("Local parser returned an invalid response.");
-  const payload = value as Record<string, unknown>;
-  if (payload.ok !== true || !Array.isArray(payload.dependencies))
-    throw new Error("Local parser did not confirm a successful analysis.");
-  if (!payload.dependencies.every(isDependency))
-    throw new Error("Local parser returned an invalid dependency schema.");
-  return { dependencies: payload.dependencies };
-}
 async function load() {
   const module = await import("./generated-analysis/quadruple_quotes_analysis");
   const wasmUrl = new URL(
@@ -52,114 +29,154 @@ async function load() {
   return ready;
 }
 
-self.onmessage = async (
-  event: MessageEvent<AnalysisRequest | { kind: "catalog" }>,
-) => {
+async function dependencies(request: AnalysisRequest) {
+  if (request.settings.plugins.ginza !== true)
+    return {
+      documentId: request.documentId,
+      revision: request.revision,
+      dependencies: [],
+      status: { pluginId: "ginza", status: "disabled" as const },
+    };
+  if (request.text.length > 5000)
+    return {
+      documentId: request.documentId,
+      revision: request.revision,
+      dependencies: [],
+      status: {
+        pluginId: "ginza",
+        status: "skipped" as const,
+        message: "Dependency analysis is limited to 5,000 UTF-16 units.",
+      },
+    };
+  const controller = new AbortController();
+  const timer = self.setTimeout(() => controller.abort(), 5_000);
   try {
-    const engine = await load();
-    if ("kind" in event.data && event.data.kind === "catalog") {
-      if (typeof engine.analysis_catalog !== "function")
-        throw new Error(
-          "The proofreading catalog is unavailable. Rebuild the WASM adapter.",
-        );
+    const response = await fetch("/api/dependencies", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: request.text }),
+      signal: controller.signal,
+    });
+    if (!response.ok)
+      throw new Error(
+        `Local parser returned ${response.status}. Start the GiNZA analysis host.`,
+      );
+    const payload: unknown = await response.json();
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      (payload as { ok?: unknown }).ok !== true ||
+      !Array.isArray((payload as { dependencies?: unknown }).dependencies)
+    )
+      throw new Error("Local parser did not confirm a successful analysis.");
+    return {
+      documentId: request.documentId,
+      revision: request.revision,
+      dependencies: (payload as { dependencies: [] }).dependencies,
+      status: { pluginId: "ginza", status: "ok" as const },
+    };
+  } catch (error) {
+    return {
+      documentId: request.documentId,
+      revision: request.revision,
+      dependencies: [],
+      status: {
+        pluginId: "ginza",
+        status: "error" as const,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  } finally {
+    self.clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+self.onmessage = async (
+  event: MessageEvent<{
+    id: number;
+    kind: string;
+    request?: AnalysisRequest;
+    pluginId?: "markdownlint" | "textlint-ja" | "textlint-ai";
+    core?: CorePayload;
+    adapters?: { diagnostics: Diagnostic[]; statuses: PluginStatus[] };
+  }>,
+) => {
+  const { id, kind } = event.data;
+  try {
+    // This branch is ahead of `load`: manual GiNZA workers never instantiate WASM.
+    if (kind === "dependencies") {
+      if (!event.data.request) throw new Error("Malformed dependency request.");
       self.postMessage({
+        id,
+        ok: true,
+        dependencies: await dependencies(event.data.request),
+      });
+      return;
+    }
+    const engine = await load();
+    if (kind === "catalog") {
+      self.postMessage({
+        id,
         ok: true,
         catalog: JSON.parse(engine.analysis_catalog()),
       });
       return;
     }
-    const original = event.data as AnalysisRequest;
-    const request: AnalysisRequest = {
-      ...original,
-      settings: JSON.parse(
+    if (kind === "core") {
+      if (!event.data.request) throw new Error("Malformed core request.");
+      const original = event.data.request;
+      const effectiveSettings = JSON.parse(
         engine.resolve_analysis_settings(
           JSON.stringify({
             documentId: original.documentId,
             settings: original.settings,
           }),
         ),
-      ),
-    };
-    if (typeof engine.analyze_text !== "function")
-      throw new Error(
-        "The proofreading engine is unavailable. Rebuild the WASM adapter.",
       );
-    const result = JSON.parse(engine.analyze_text(JSON.stringify(request)));
-    const adapters =
-      request.text.length > 100_000
-        ? {
-            diagnostics: [],
-            statuses: TRUSTED_ADAPTER_CATALOG.filter(
-              (plugin) => plugin.runPolicy === "realtime",
-            ).map((plugin) => {
-              const isEnabled =
-                request.settings.plugins[plugin.id] ?? plugin.defaultEnabled;
-              return isEnabled
-                ? {
-                    pluginId: plugin.id,
-                    status: "skipped" as const,
-                    message:
-                      "Text is over the 100,000 UTF-16 unit analysis limit.",
-                  }
-                : { pluginId: plugin.id, status: "disabled" as const };
-            }),
-          }
-        : await runTrustedAdapters(request);
-    const adapterDiagnostics = JSON.parse(
-      engine.apply_diagnostic_settings(
-        JSON.stringify({
-          documentId: request.documentId,
-          settings: request.settings,
-          diagnostics: adapters.diagnostics,
-        }),
-      ),
-    );
-    const diagnostics = [...result.diagnostics, ...adapterDiagnostics];
-    result.diagnostics = diagnostics.slice(0, 200);
-    result.truncated ||= diagnostics.length > 200;
-    result.statuses = [...result.statuses, ...adapters.statuses];
-    if (
-      request.manual &&
-      request.settings.plugins.ginza === true &&
-      request.text.length > 5000
-    ) {
-      result.statuses.push({
-        pluginId: "ginza",
-        status: "skipped",
-        message: "Dependency analysis is limited to 5,000 UTF-16 units.",
+      const result = JSON.parse(
+        engine.analyze_text(
+          JSON.stringify({ ...original, settings: effectiveSettings }),
+        ),
+      ) as AnalysisResult;
+      self.postMessage({
+        id,
+        ok: true,
+        core: { result, effectiveSettings } satisfies CorePayload,
       });
-    } else if (request.manual && request.settings.plugins.ginza === true) {
-      try {
-        const response = await fetch("/api/dependencies", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: request.text }),
-        });
-        if (!response.ok) {
-          const failure = await response.json().catch(() => null);
-          const message =
-            typeof failure === "object" &&
-            failure !== null &&
-            "error" in failure &&
-            typeof failure.error === "string"
-              ? failure.error
-              : `Local parser returned ${response.status}. Start the GiNZA analysis host.`;
-          throw new Error(message);
-        }
-        const payload = dependencyPayload(await response.json());
-        result.dependencies = payload.dependencies;
-        result.statuses.push({ pluginId: "ginza", status: "ok" });
-      } catch (error) {
-        result.statuses.push({
-          pluginId: "ginza",
-          status: "error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
+      return;
     }
-    self.postMessage({ ok: true, result });
+    if (kind === "policy") {
+      if (!event.data.core || !event.data.adapters)
+        throw new Error("Malformed policy request.");
+      const core = event.data.core;
+      const adapters = event.data.adapters;
+      const filtered = JSON.parse(
+        engine.apply_diagnostic_settings(
+          JSON.stringify({
+            documentId: core.result.documentId,
+            settings: core.effectiveSettings,
+            diagnostics: adapters.diagnostics,
+          }),
+        ),
+      ) as Diagnostic[];
+      const diagnostics = [...core.result.diagnostics, ...filtered];
+      self.postMessage({
+        id,
+        ok: true,
+        result: {
+          ...core.result,
+          diagnostics: diagnostics.slice(0, 200),
+          truncated: core.result.truncated || diagnostics.length > 200,
+          statuses: [...core.result.statuses, ...adapters.statuses],
+        },
+      });
+      return;
+    }
+    throw new Error("Unknown analysis worker request.");
   } catch (error) {
     self.postMessage({
+      id,
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     });

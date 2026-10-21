@@ -342,13 +342,126 @@ test("manual GiNZA reports failed and malformed local responses without backgrou
   expect(requests).toBe(1);
 
   mode = "malformed";
-  await page
-    .getByLabel("Text body", { exact: true })
-    .fill("文章を更新します。");
+  await run.click();
   await expect(page.getByRole("list", { name: "Plugin status" })).toContainText(
     "ginza: error — Local parser did not confirm a successful analysis.",
   );
   expect(requests).toBe(2);
+  await page
+    .getByLabel("Text body", { exact: true })
+    .fill("文章を更新します。");
+  await page.waitForTimeout(500);
+  expect(requests).toBe(2);
+  await run.click();
+  await expect(page.getByRole("list", { name: "Plugin status" })).toContainText(
+    "ginza: error — Local parser did not confirm a successful analysis.",
+  );
+  expect(requests).toBe(3);
+});
+
+test("a superseded same-text GiNZA run keeps the latest dependency graph and realtime checks", async ({
+  page,
+}) => {
+  const text = "😀古い。新しい。teh";
+  let dependencyRequests = 0;
+  let releaseFirstResponse: (() => void) | undefined;
+  const firstResponseReleased = new Promise<void>((resolve) => {
+    releaseFirstResponse = resolve;
+  });
+  let firstRequestSeen: (() => void) | undefined;
+  const firstRequest = new Promise<void>((resolve) => {
+    firstRequestSeen = resolve;
+  });
+
+  await page.route("**/api/dependencies", async (route) => {
+    dependencyRequests += 1;
+    if (dependencyRequests === 1) {
+      firstRequestSeen?.();
+      await firstResponseReleased;
+      try {
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: true,
+            dependencies: [
+              {
+                id: 1,
+                text: "古い",
+                range: { start: 2, end: 4 },
+                head: null,
+                relation: "root",
+                sentence: 0,
+              },
+            ],
+          }),
+        });
+      } catch {
+        // The second manual run deliberately aborts this retired browser request.
+      }
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        dependencies: [
+          {
+            id: 2,
+            text: "新しい",
+            range: { start: 5, end: 8 },
+            head: null,
+            relation: "root",
+            sentence: 0,
+          },
+        ],
+      }),
+    });
+  });
+
+  await createText(page, "Superseded dependency", text);
+  await openProofreading(page);
+  await expect(page.locator(".inline-diagnostic")).toHaveText("teh");
+  await page.getByText("Rules and plugins", { exact: true }).click();
+  await expandPlugin(page, "Japanese dependencies");
+  await page
+    .getByRole("checkbox", { name: "Japanese dependencies", exact: true })
+    .check();
+  const run = page.getByRole("button", {
+    name: "Run dependency analysis",
+    exact: true,
+  });
+
+  await run.click();
+  await firstRequest;
+  await run.click();
+  await expect(page.locator(".dependency-table")).toContainText("新しい");
+  await expect(page.locator(".dependency-table")).not.toContainText("古い");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".inline-diagnostic")).toHaveText("teh");
+
+  releaseFirstResponse?.();
+  await page.waitForTimeout(100);
+  expect(dependencyRequests).toBe(2);
+  await expect(page.locator(".dependency-table")).toContainText("新しい");
+  await expect(page.locator(".dependency-table")).not.toContainText("古い");
+  await page
+    .locator(".dependency-table")
+    .getByRole("button", { name: "新しい", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page
+        .getByLabel("Text body", { exact: true })
+        .evaluate((element: HTMLTextAreaElement) => ({
+          start: element.selectionStart,
+          end: element.selectionEnd,
+          selected: element.value.slice(
+            element.selectionStart,
+            element.selectionEnd,
+          ),
+        })),
+    )
+    .toEqual({ start: 5, end: 8, selected: "新しい" });
 });
 
 test("textlint detects a decomposed Japanese character and the individual rule can be disabled", async ({

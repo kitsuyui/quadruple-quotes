@@ -417,7 +417,7 @@ test("mobile character limits count graphemes, round-trip in presets and remain 
   const saved = await workspace(page);
   await open(page);
   await page.getByText("Rules and plugins", { exact: true }).click();
-  await page.getByLabel("Character limit", { exact: true }).fill("1");
+  await page.getByRole("spinbutton", { name: "Character limit" }).fill("1");
   await page.getByRole("button", { name: "Set limit", exact: true }).click();
   await expect(checks(page)).toHaveText("Checks: 1 issue");
   await expect(

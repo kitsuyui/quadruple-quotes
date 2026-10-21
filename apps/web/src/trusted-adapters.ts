@@ -121,11 +121,14 @@ function offsetAtLine(text: string, line: number) {
 
 export async function runTrustedAdapters(
   request: AnalysisRequest,
+  only?: "markdownlint" | "textlint-ja" | "textlint-ai",
 ): Promise<{ diagnostics: Diagnostic[]; statuses: PluginStatus[] }> {
   const diagnostics: Diagnostic[] = [];
   const statuses: PluginStatus[] = [];
   const markdown = trustedPlugin("markdownlint");
-  if (!enabled(request, markdown))
+  if (only !== undefined && only !== markdown.id) {
+    // This lane intentionally has no work.
+  } else if (!enabled(request, markdown))
     statuses.push({ pluginId: markdown.id, status: "disabled" });
   else if (request.format !== "markdown")
     statuses.push({
@@ -172,13 +175,16 @@ export async function runTrustedAdapters(
     }
   const textlint = trustedPlugin("textlint-ja");
   const ai = trustedPlugin("textlint-ai");
-  const textlintEnabled = enabled(request, textlint);
+  const textlintEnabled =
+    (only === undefined || only === textlint.id) && enabled(request, textlint);
   const aiEnabled =
+    (only === undefined || only === ai.id) &&
     enabled(request, ai) &&
     request.settings.rules["textlint-ai.hype"] !== false;
-  if (!textlintEnabled)
+  if ((only === undefined || only === textlint.id) && !textlintEnabled)
     statuses.push({ pluginId: textlint.id, status: "disabled" });
-  if (!aiEnabled) statuses.push({ pluginId: ai.id, status: "disabled" });
+  if ((only === undefined || only === ai.id) && !aiEnabled)
+    statuses.push({ pluginId: ai.id, status: "disabled" });
   if (textlintEnabled || aiEnabled)
     try {
       const [{ TextlintKernel }, { moduleInterop }, pluginModule] =

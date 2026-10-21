@@ -9,6 +9,7 @@ import { allowWord, ignoreRule } from "../../../packages/analysis/src/settings";
 import type {
   AnalysisResult,
   AnalysisSettings,
+  DependencyAnalysisResult,
   Diagnostic,
   DiagnosticFix,
   PluginDescriptor,
@@ -42,6 +43,14 @@ type DiagnosticDisplay = {
 type Pending =
   | { kind: "leave"; proceed(): void }
   | { kind: "delete"; document: TextDocument };
+type ManualDependencyIntent = {
+  documentId: string;
+  revision: number;
+  text: string;
+  format: TextDocument["format"];
+  settings: AnalysisSettings;
+  generation: number;
+};
 
 function inView(documents: TextDocument[], archived: boolean) {
   return documents
@@ -97,7 +106,9 @@ export function App({ host }: { host: EditorHost }) {
   const selectedIssue = useRef<string | null>(null);
   const [issueAnnouncement, setIssueAnnouncement] = useState("");
   const format = draft?.format ?? "text";
-  const [manualAnalysis, setManualAnalysis] = useState(false);
+  const [manualIntent, setManualIntent] =
+    useState<ManualDependencyIntent | null>(null);
+  const manualIntentRef = useRef<ManualDependencyIntent | null>(manualIntent);
   const [initialAnalysisSettings] = useState(() =>
     safelyLoadAnalysisSettings(window.localStorage),
   );
@@ -116,9 +127,11 @@ export function App({ host }: { host: EditorHost }) {
   const draftRef = useRef(draft);
   const revisionRef = useRef(revision);
   const analysisRef = useRef(analysisResult);
+  const dependencyResultRef = useRef<DependencyAnalysisResult | null>(null);
   draftRef.current = draft;
   revisionRef.current = revision;
   analysisRef.current = analysisResult;
+  manualIntentRef.current = manualIntent;
   const saved = documents.find((item) => item.id === draft?.id);
   const dirty =
     draft !== null &&
@@ -296,7 +309,7 @@ export function App({ host }: { host: EditorHost }) {
   }, []);
 
   useEffect(() => {
-    if (!proofreadingOpen) setManualAnalysis(false);
+    if (!proofreadingOpen) setManualIntent(null);
   }, [proofreadingOpen]);
 
   useEffect(() => {
@@ -310,7 +323,6 @@ export function App({ host }: { host: EditorHost }) {
 
   const draftId = draft?.id;
   const body = draft?.body;
-  const runDependencies = manualAnalysis && proofreadingOpen;
   useEffect(() => {
     if (!draftId || body === undefined || composing || analysisError) return;
     const documentId = draftId;
@@ -323,7 +335,7 @@ export function App({ host }: { host: EditorHost }) {
           text: body,
           format,
           settings: analysisSettings,
-          manual: runDependencies,
+          manual: false,
         })
         .then((result) => {
           if (
@@ -332,7 +344,32 @@ export function App({ host }: { host: EditorHost }) {
             result.documentId === documentId &&
             result.revision === expectedRevision
           ) {
-            setAnalysisResult(result);
+            setAnalysisResult((current) => {
+              const dependency = dependencyResultRef.current;
+              if (
+                !current ||
+                current.documentId !== documentId ||
+                current.revision !== expectedRevision
+              )
+                return dependency?.documentId === documentId &&
+                  dependency.revision === expectedRevision
+                  ? {
+                      ...result,
+                      dependencies: dependency.dependencies,
+                      statuses: [...result.statuses, dependency.status],
+                    }
+                  : result;
+              const ginza = current.statuses.find(
+                (status) => status.pluginId === "ginza",
+              );
+              return ginza
+                ? {
+                    ...result,
+                    dependencies: current.dependencies,
+                    statuses: [...result.statuses, ginza],
+                  }
+                : result;
+            });
             setDiagnosticDisplay({
               documentId,
               analyzedRevision: expectedRevision,
@@ -351,7 +388,7 @@ export function App({ host }: { host: EditorHost }) {
     }, 350);
     return () => {
       window.clearTimeout(timer);
-      host.analysis.dispose();
+      host.analysis.cancel();
     };
   }, [
     draftId,
@@ -361,7 +398,88 @@ export function App({ host }: { host: EditorHost }) {
     format,
     host,
     analysisSettings,
-    runDependencies,
+    analysisError,
+  ]);
+
+  useEffect(() => {
+    if (
+      !manualIntent ||
+      !proofreadingOpen ||
+      !draftId ||
+      body === undefined ||
+      composing ||
+      analysisError
+    )
+      return;
+    if (
+      manualIntent.documentId !== draftId ||
+      manualIntent.revision !== revision ||
+      manualIntent.text !== body ||
+      manualIntent.format !== format ||
+      JSON.stringify(manualIntent.settings) !== JSON.stringify(analysisSettings)
+    ) {
+      setManualIntent(null);
+      return;
+    }
+    const documentId = draftId;
+    const expectedRevision = revision;
+    const intentGeneration = manualIntent.generation;
+    void host.analysis
+      .analyzeDependencies({
+        documentId,
+        revision: expectedRevision,
+        text: manualIntent.text,
+        format: manualIntent.format,
+        settings: manualIntent.settings,
+        manual: true,
+      })
+      .then((dependencyResult) => {
+        if (
+          draftRef.current?.id !== documentId ||
+          revisionRef.current !== expectedRevision ||
+          manualIntentRef.current?.generation !== intentGeneration ||
+          dependencyResult.documentId !== documentId ||
+          dependencyResult.revision !== expectedRevision
+        )
+          return;
+        dependencyResultRef.current = dependencyResult;
+        setAnalysisResult((current) => {
+          if (
+            !current ||
+            current.documentId !== documentId ||
+            current.revision !== expectedRevision
+          )
+            return current;
+          return {
+            ...current,
+            dependencies: dependencyResult.dependencies,
+            statuses: [
+              ...current.statuses.filter(
+                (status) => status.pluginId !== "ginza",
+              ),
+              dependencyResult.status,
+            ],
+          };
+        });
+      })
+      .catch((error: unknown) => {
+        if (
+          draftRef.current?.id === documentId &&
+          revisionRef.current === expectedRevision &&
+          manualIntentRef.current?.generation === intentGeneration
+        )
+          setAnalysisError(errorMessage(error));
+      });
+  }, [
+    manualIntent,
+    proofreadingOpen,
+    draftId,
+    body,
+    composing,
+    revision,
+    format,
+    host,
+    analysisSettings,
     analysisError,
   ]);
 
@@ -387,6 +505,7 @@ export function App({ host }: { host: EditorHost }) {
     setIssueAnnouncement("");
     draftRef.current = document;
     setDraft(document);
+    setManualIntent(null);
     advanceRevision();
     setAnalysisResult(null);
     setDiagnosticDisplay(null);
@@ -426,6 +545,7 @@ export function App({ host }: { host: EditorHost }) {
       bodyHistory.record(current.body, value, edit);
     draftRef.current = { ...current, [field]: value } as TextDocument;
     setDraft(draftRef.current);
+    if (field === "body" || field === "format") setManualIntent(null);
     if (field === "body") {
       const previousRevision = revisionRef.current;
       const nextRevision = advanceRevision();
@@ -676,7 +796,7 @@ export function App({ host }: { host: EditorHost }) {
       setSavedPresets(presets);
       setAnalysisError(null);
       if (changed) {
-        setManualAnalysis(false);
+        setManualIntent(null);
         invalidateAnalysis();
       }
       return true;
@@ -1408,8 +1528,16 @@ export function App({ host }: { host: EditorHost }) {
         onException={addException}
         onSettings={changeSettings}
         onDependencies={() => {
-          setManualAnalysis(true);
-          recheck();
+          const currentDraft = draftRef.current;
+          if (!currentDraft) return;
+          setManualIntent((current) => ({
+            documentId: currentDraft.id,
+            revision: revisionRef.current,
+            text: currentDraft.body,
+            format: currentDraft.format ?? "text",
+            settings: analysisSettings,
+            generation: (current?.generation ?? 0) + 1,
+          }));
         }}
       />
       {analysisError && (
@@ -1423,7 +1551,7 @@ export function App({ host }: { host: EditorHost }) {
               setAnalysisSettings(loaded.settings);
               setSavedPresets(loaded.presets);
               setAnalysisError(loaded.error);
-              setManualAnalysis(false);
+              setManualIntent(null);
               invalidateAnalysis();
             }}
           >
@@ -1442,7 +1570,7 @@ export function App({ host }: { host: EditorHost }) {
                 );
                 setAnalysisSettings(settings);
                 setSavedPresets([]);
-                setManualAnalysis(false);
+                setManualIntent(null);
                 setAnalysisError(null);
                 invalidateAnalysis();
               } catch (error) {

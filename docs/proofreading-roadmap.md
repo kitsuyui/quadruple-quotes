@@ -67,16 +67,33 @@ Temporary single-occurrence dismissals, regular-expression exceptions, project/t
 
 Before enabling an adapter by default, record cold and warm worker latency, a 100,000-unit request outcome, and built bundle output. These are regression evidence for the checked machine, not cross-device promises. Heavy or native-only analyzers stay manual until those measurements show an acceptable interaction cost.
 
-### Browser measurement, 2026-10-03
+### Browser measurement, 2026-10-22
 
-An isolated Chromium run against the production preview on port 4183 measured from a textarea update until the matching result rendered. Each warm value is the median of eleven same-worker samples and includes the 350 ms UI debounce; it is an interaction measurement, not engine-only time. A cold value opens a fresh browser context and worker. The curated case enables Japanese writing (including the two optional rules), AI hype hints, and Markdown structure checks.
+`bun run scripts/benchmark-analysis-browser.ts` builds the production browser
+entry, starts and closes a temporary localhost preview server, and writes all
+raw samples to `.tmp/remaining-roadmap/priority4-performance.json`. The run
+used Bun 1.3.13 on macOS 27.0.1 arm64 and HeadlessChrome 153.0.8010.12 with
+14 reported logical processors. Cold means the first request on a fresh port.
+Warm means one priming request followed by eleven measurements on one port;
+the table reports median / p95 wall time. It exercises real
+`BrowserAnalysisPort` workers and WASM, rather than mocked lanes.
 
-| Condition | Cold, 10,000 UTF-16 | Warm, 10,000 | Warm, 100,000 | Warm, 100,001 |
-| --- | ---: | ---: | ---: | ---: |
-| Default core and typos, plain text | 454.7 ms | 399.8 ms | 415.6 ms | 415.6 ms |
-| Curated Japanese, AI, and Markdown | 520.1 ms | 433.4 ms | 483.3 ms | 417.5 ms |
+| Case | Exact input | Settings and outcome | Cold | Warm median / p95 |
+| --- | ---: | --- | ---: | ---: |
+| Plain text | 39 UTF-16 / 39 UTF-8 bytes | Default; 1 diagnostic | 56.7 ms | 0.2 / 0.3 ms |
+| Markdown with adapters | 33 UTF-16 / 33 UTF-8 bytes | markdownlint, Japanese textlint, and AI hints enabled; 2 diagnostics | 45.3 ms | 0.5 / 0.8 ms |
+| Large plain text | 100,000 UTF-16 / 100,000 UTF-8 bytes | Default; 0 diagnostics | 34.8 ms | 3.8 / 4.0 ms |
+| Diagnostic pressure | 4,000 UTF-16 / 4,000 UTF-8 bytes | Default; exactly 200 diagnostics | 31.7 ms | 1.7 / 2.1 ms |
+| GiNZA over-limit shortcut | 100,001 UTF-16 / 100,001 UTF-8 bytes | Manual dependency request; `ginza:skipped`, 0 rows | 2.8 ms | 0.0 / 0.3 ms |
 
-At 100,001 UTF-16 units the adapter shortcut applies, so the result remains intentionally bounded; it does not establish that a terminated worker retains a warm cache. The checked build contains an 846,323-byte analysis worker (238,610 bytes gzip), a 2,735,168-byte analysis WebAssembly asset (873,777 bytes gzip), and a 150,683-byte core WebAssembly asset (52,696 bytes gzip). A scan of `apps/web/dist` found no `kuromojin`, `DIC_PATH`, or `kuromoji` references.
+Each realtime port created exactly four workers (core and three adapter lanes);
+the GiNZA shortcut created exactly one worker. The production bundle contained
+a 6.89 kB core/GiNZA entry, 840.70 kB adapter entry, and 2.85 MB analysis WASM
+(902.14 kB gzip). These samples are local observations, not latency or RAM
+promises for other browsers or hardware. The full scan remains deliberate:
+the 100,000-unit case completes analysis rather than silently truncating the
+document; only the separately manual GiNZA path skips over its 5,000-unit
+limit.
 
 The same isolated session also exercised the real local GiNZA helper through the preview proxy. `太郎は😀寿司を食べる。花子も本を読む。` produced 13 dependency rows across two sentences, including the emoji-to-`寿司` compound relation. A second request produced a new dependency result while the same parser child remained resident. This verifies local proxy routing and process reuse for that session; it makes no lifetime guarantee across helper restarts.
 
@@ -100,3 +117,9 @@ Run `cargo run -p quadruple-quotes-core --release --example analysis_benchmark` 
 GiNZA requires a separately installed Python environment and model, then the local analysis host. The UI uses the same-origin `/api/dependencies` proxy on development/preview ports 5173 and 4173; manual requests cap at 5,000 UTF-16 units. The helper reports unavailable models as HTTP 503, parser or protocol failures as 502, timeouts as 504, and malformed or over-limit input as 400; the browser displays the supplied plugin error. No cloud calls, auto-rewrites, or AI authorship scores are used. LSP, VSCode, and Tauri remain WIP.
 
 For GiNZA, create an isolated Python environment (for example with `uv`), install `ja-ginza`, set `ANALYSIS_HOST_PYTHON` when Python is not on `PATH`, and start `bun apps/analysis-host/server.ts`. The host reads `ANALYSIS_HOST_SCRIPT` and `ANALYSIS_HOST_PORT`; its default port is 4180. The browser uses only the development/preview proxy, never a cloud endpoint.
+# Execution lanes
+
+Realtime execution uses the bounded worker topology described in
+[analysis-lanes.md](analysis-lanes.md). Core diagnostics and settings remain in
+the WASM lane; adapter failures are isolated before Rust policy and the shared
+diagnostic cap are applied.
