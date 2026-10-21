@@ -14,7 +14,20 @@ const script =
   new URL("../../scripts/dependency-parser.py", import.meta.url).pathname;
 const python = process.env.ANALYSIS_HOST_PYTHON ?? "python3";
 const timeoutMs = Number(process.env.ANALYSIS_HOST_TIMEOUT_MS ?? 30_000);
+const japaneseStyleTimeoutMs = Number(
+  process.env.ANALYSIS_HOST_JAPANESE_STYLE_TIMEOUT_MS ?? 5_000,
+);
+const japaneseStyleRunner =
+  process.env.ANALYSIS_HOST_JAPANESE_STYLE_RUNNER ??
+  new URL("./japanese-style-runner.ts", import.meta.url).pathname;
+const bun = process.env.ANALYSIS_HOST_BUN ?? "bun";
 const maxOutputFrameBytes = 512 * 1024;
+const japaneseRuleIds = new Set([
+  "no-doubled-joshi",
+  "no-mix-dearu-desumasu",
+  "no-redundant-expression",
+  "no-abusage",
+]);
 let child: ReturnType<typeof spawn> | undefined;
 type ParserReply = { id: number; ok: true; dependencies: unknown[] };
 class ParserError extends Error {
@@ -36,8 +49,10 @@ let pending:
 const tombstones = new Set<number>();
 function tombstone(id: number) {
   tombstones.add(id);
-  if (tombstones.size > 32)
-    tombstones.delete(tombstones.values().next().value!);
+  if (tombstones.size > 32) {
+    const oldest = tombstones.values().next().value;
+    if (oldest !== undefined) tombstones.delete(oldest);
+  }
 }
 let sequence = 0;
 let buffered = "";
@@ -46,7 +61,7 @@ function startParser() {
   child = undefined;
   child = spawn(python, [script], { stdio: ["pipe", "pipe", "inherit"] });
   buffered = "";
-  child.stdout!.on("data", onOutput);
+  child.stdout?.on("data", onOutput);
   child.on("error", (error) => failPending(new ParserError(error.message)));
   child.on("exit", () => {
     child = undefined;
@@ -169,7 +184,12 @@ function dependency(text: string, onAccepted: (id: number) => void) {
     const id = sequence++;
     pending = { id, text, resolve, reject };
     onAccepted(id);
-    startParser().stdin!.write(`${JSON.stringify({ id, text })}\n`);
+    const parser = startParser();
+    if (!parser.stdin) {
+      pending = undefined;
+      return reject(new ParserError("parser input unavailable"));
+    }
+    parser.stdin.write(`${JSON.stringify({ id, text })}\n`);
     setTimeout(() => {
       if (pending?.id === id) {
         pending = undefined;
@@ -179,10 +199,109 @@ function dependency(text: string, onAccepted: (id: number) => void) {
     }, timeoutMs).unref();
   });
 }
+function japaneseStyle(
+  value: unknown,
+  onChild: (next: ReturnType<typeof spawn>) => void,
+) {
+  return new Promise<unknown>((resolve, reject) => {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      typeof (value as { text?: unknown }).text !== "string" ||
+      Buffer.byteLength((value as { text: string }).text, "utf16le") / 2 >
+        5000 ||
+      !Array.isArray((value as { rules?: unknown }).rules) ||
+      !["text", "markdown"].includes(
+        (value as { format?: unknown }).format as string,
+      ) ||
+      !(value as { rules: unknown[] }).rules.every((rule) =>
+        [
+          "no-doubled-joshi",
+          "no-mix-dearu-desumasu",
+          "no-redundant-expression",
+          "no-abusage",
+        ].includes(rule as string),
+      )
+    )
+      return reject(new ParserError("invalid Japanese style request", 400));
+    const runner = spawn(bun, [japaneseStyleRunner], {
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    onChild(runner);
+    let output = "";
+    const timer = setTimeout(() => {
+      runner.kill();
+      reject(new ParserError("Japanese style analysis timed out", 504));
+    }, japaneseStyleTimeoutMs).unref();
+    runner.stdout?.on("data", (chunk) => {
+      output += chunk;
+      if (Buffer.byteLength(output) > maxOutputFrameBytes) runner.kill();
+    });
+    runner.on("error", (error) => reject(new ParserError(error.message)));
+    runner.on("exit", (code) => {
+      clearTimeout(timer);
+      try {
+        if (code !== 0) throw new Error("Japanese style runner failed");
+        const reply = JSON.parse(output) as Record<string, unknown>;
+        if (
+          reply.ok !== true ||
+          !Array.isArray(reply.diagnostics) ||
+          reply.diagnostics.length > 200 ||
+          !reply.diagnostics.every((diagnostic) =>
+            validJapaneseDiagnostic(
+              diagnostic,
+              (value as { text: string }).text,
+            ),
+          )
+        )
+          throw new Error("invalid Japanese style response");
+        resolve(reply);
+      } catch (error) {
+        reject(
+          new ParserError(
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+      }
+    });
+    runner.stdin?.end(JSON.stringify(value));
+  });
+}
+function validJapaneseDiagnostic(value: unknown, text: string) {
+  if (typeof value !== "object" || value === null) return false;
+  const diagnostic = value as {
+    ruleId?: unknown;
+    message?: unknown;
+    range?: { start?: unknown; end?: unknown };
+  };
+  const range = diagnostic.range;
+  const boundary = (offset: number) =>
+    !(
+      offset > 0 &&
+      offset < text.length &&
+      text.charCodeAt(offset - 1) >= 0xd800 &&
+      text.charCodeAt(offset - 1) <= 0xdbff &&
+      text.charCodeAt(offset) >= 0xdc00 &&
+      text.charCodeAt(offset) <= 0xdfff
+    );
+  return (
+    typeof diagnostic.ruleId === "string" &&
+    japaneseRuleIds.has(diagnostic.ruleId) &&
+    typeof diagnostic.message === "string" &&
+    range !== undefined &&
+    Number.isInteger(range.start) &&
+    Number.isInteger(range.end) &&
+    range.start >= 0 &&
+    range.end >= range.start &&
+    range.end <= text.length &&
+    boundary(range.start) &&
+    boundary(range.end)
+  );
+}
 createServer(async (request, response) => {
   if (
     request.method !== "POST" ||
-    request.url !== "/api/dependencies" ||
+    !["/api/dependencies", "/api/japanese-style"].includes(request.url ?? "") ||
     !request.headers["content-type"]?.startsWith("application/json")
   ) {
     response.writeHead(404).end();
@@ -200,6 +319,7 @@ createServer(async (request, response) => {
   let bytes = 0;
   let ownedId: number | undefined;
   let ownerCancelled = false;
+  let runner: ReturnType<typeof spawn> | undefined;
   const respond = (status: number, value?: unknown) => {
     if (response.destroyed || response.writableEnded) return;
     if (value === undefined) response.writeHead(status).end();
@@ -219,6 +339,7 @@ createServer(async (request, response) => {
   });
   const cancelOwned = () => {
     ownerCancelled = true;
+    runner?.kill();
     if (ownedId !== undefined && pending?.id === ownedId) {
       const current = pending;
       tombstone(ownedId);
@@ -232,6 +353,14 @@ createServer(async (request, response) => {
     if (response.destroyed || response.writableEnded) return;
     try {
       const value = JSON.parse(body);
+      if (request.url === "/api/japanese-style") {
+        const result = await japaneseStyle(value, (child) => {
+          runner = child;
+          if (ownerCancelled) runner?.kill();
+        });
+        respond(200, result);
+        return;
+      }
       if (typeof value.text !== "string") throw new Error("text required");
       const result = await dependency(value.text, (id) => {
         ownedId = id;

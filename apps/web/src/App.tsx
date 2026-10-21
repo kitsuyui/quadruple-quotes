@@ -44,6 +44,7 @@ type Pending =
   | { kind: "leave"; proceed(): void }
   | { kind: "delete"; document: TextDocument };
 type ManualDependencyIntent = {
+  kind: "dependencies" | "japanese-style";
   documentId: string;
   revision: number;
   text: string;
@@ -424,52 +425,100 @@ export function App({ host }: { host: EditorHost }) {
     const documentId = draftId;
     const expectedRevision = revision;
     const intentGeneration = manualIntent.generation;
-    void host.analysis
-      .analyzeDependencies({
-        documentId,
-        revision: expectedRevision,
-        text: manualIntent.text,
-        format: manualIntent.format,
-        settings: manualIntent.settings,
-        manual: true,
-      })
-      .then((dependencyResult) => {
-        if (
-          draftRef.current?.id !== documentId ||
-          revisionRef.current !== expectedRevision ||
-          manualIntentRef.current?.generation !== intentGeneration ||
-          dependencyResult.documentId !== documentId ||
-          dependencyResult.revision !== expectedRevision
-        )
-          return;
-        dependencyResultRef.current = dependencyResult;
-        setAnalysisResult((current) => {
+    if (manualIntent.kind === "dependencies")
+      void host.analysis
+        .analyzeDependencies({
+          documentId,
+          revision: expectedRevision,
+          text: manualIntent.text,
+          format: manualIntent.format,
+          settings: manualIntent.settings,
+          manual: true,
+        })
+        .then((dependencyResult) => {
           if (
-            !current ||
-            current.documentId !== documentId ||
-            current.revision !== expectedRevision
+            draftRef.current?.id !== documentId ||
+            revisionRef.current !== expectedRevision ||
+            manualIntentRef.current?.generation !== intentGeneration ||
+            dependencyResult.documentId !== documentId ||
+            dependencyResult.revision !== expectedRevision
           )
-            return current;
-          return {
-            ...current,
-            dependencies: dependencyResult.dependencies,
-            statuses: [
-              ...current.statuses.filter(
-                (status) => status.pluginId !== "ginza",
-              ),
-              dependencyResult.status,
-            ],
-          };
+            return;
+          dependencyResultRef.current = dependencyResult;
+          setAnalysisResult((current) => {
+            if (
+              !current ||
+              current.documentId !== documentId ||
+              current.revision !== expectedRevision
+            )
+              return current;
+            return {
+              ...current,
+              dependencies: dependencyResult.dependencies,
+              statuses: [
+                ...current.statuses.filter(
+                  (status) => status.pluginId !== "ginza",
+                ),
+                dependencyResult.status,
+              ],
+            };
+          });
+        })
+        .catch((error: unknown) => {
+          if (
+            draftRef.current?.id === documentId &&
+            revisionRef.current === expectedRevision &&
+            manualIntentRef.current?.generation === intentGeneration
+          )
+            setAnalysisError(errorMessage(error));
         });
-      })
-      .catch((error: unknown) => {
-        if (
-          draftRef.current?.id === documentId &&
-          revisionRef.current === expectedRevision &&
-          manualIntentRef.current?.generation === intentGeneration
-        )
-          setAnalysisError(errorMessage(error));
-      });
+    if (manualIntent.kind === "japanese-style")
+      void host.analysis
+        .analyzeJapaneseStyle({
+          documentId,
+          revision: expectedRevision,
+          text: manualIntent.text,
+          format: manualIntent.format,
+          settings: manualIntent.settings,
+          manual: true,
+        })
+        .then((japaneseResult) => {
+          if (
+            draftRef.current?.id !== documentId ||
+            revisionRef.current !== expectedRevision ||
+            manualIntentRef.current?.generation !== intentGeneration ||
+            japaneseResult.documentId !== documentId ||
+            japaneseResult.revision !== expectedRevision
+          )
+            return;
+          setAnalysisResult((current) => {
+            if (
+              !current ||
+              current.documentId !== documentId ||
+              current.revision !== expectedRevision
+            )
+              return current;
+            return {
+              ...current,
+              diagnostics: [
+                ...current.diagnostics.filter(
+                  (item) => item.pluginId !== "textlint-ja-morphology",
+                ),
+                ...japaneseResult.diagnostics,
+              ],
+              statuses: [
+                ...current.statuses.filter(
+                  (status) => status.pluginId !== "textlint-ja-morphology",
+                ),
+                japaneseResult.status,
+              ],
+            };
+          });
+        })
+        .catch((error: unknown) => {
+          if (manualIntentRef.current?.generation === intentGeneration)
+            setAnalysisError(errorMessage(error));
+        });
   }, [
     manualIntent,
     proofreadingOpen,
@@ -1531,6 +1580,20 @@ export function App({ host }: { host: EditorHost }) {
           const currentDraft = draftRef.current;
           if (!currentDraft) return;
           setManualIntent((current) => ({
+            kind: "dependencies",
+            documentId: currentDraft.id,
+            revision: revisionRef.current,
+            text: currentDraft.body,
+            format: currentDraft.format ?? "text",
+            settings: analysisSettings,
+            generation: (current?.generation ?? 0) + 1,
+          }));
+        }}
+        onJapaneseStyle={() => {
+          const currentDraft = draftRef.current;
+          if (!currentDraft) return;
+          setManualIntent((current) => ({
+            kind: "japanese-style",
             documentId: currentDraft.id,
             revision: revisionRef.current,
             text: currentDraft.body,

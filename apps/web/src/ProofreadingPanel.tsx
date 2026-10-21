@@ -23,6 +23,7 @@ export function ProofreadingPanel({
   settings,
   onSettings,
   onDependencies,
+  onJapaneseStyle,
   onApply,
   disabled,
   presets,
@@ -49,6 +50,7 @@ export function ProofreadingPanel({
   text: string;
   onException(diagnostic: Diagnostic, action: ExceptionAction): void;
   onDependencies(): void;
+  onJapaneseStyle(): void;
 }) {
   const [filter, setFilter] = useState("");
   useEffect(() => {
@@ -149,6 +151,11 @@ export function ProofreadingPanel({
       {(settings.plugins.ginza ?? false) && (
         <button type="button" onClick={onDependencies}>
           Run dependency analysis
+        </button>
+      )}
+      {(settings.plugins["textlint-ja-morphology"] ?? false) && (
+        <button type="button" onClick={onJapaneseStyle}>
+          Run local Japanese style analysis (5,000 UTF-16 units max)
         </button>
       )}
       {dependencies.length ? (

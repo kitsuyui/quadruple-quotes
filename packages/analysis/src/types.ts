@@ -123,6 +123,12 @@ export interface DependencyAnalysisResult {
   dependencies: DependencyNode[];
   status: PluginStatus;
 }
+export interface JapaneseStyleAnalysisResult {
+  documentId: string;
+  revision: number;
+  diagnostics: Diagnostic[];
+  status: PluginStatus;
+}
 
 export interface AnalysisPort {
   catalog(): Promise<PluginDescriptor[]>;
@@ -131,6 +137,9 @@ export interface AnalysisPort {
   analyzeDependencies(
     request: AnalysisRequest,
   ): Promise<DependencyAnalysisResult>;
+  analyzeJapaneseStyle(
+    request: AnalysisRequest,
+  ): Promise<JapaneseStyleAnalysisResult>;
   /** Stops only active work; an initialized worker remains available for reuse. */
   cancel(): void;
   dispose(): void;
