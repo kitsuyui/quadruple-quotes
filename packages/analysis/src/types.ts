@@ -116,8 +116,22 @@ export interface AnalysisResult {
   elapsedMs?: number;
 }
 
+/** The result of a manual, potentially expensive dependency inspection. */
+export interface DependencyAnalysisResult {
+  documentId: string;
+  revision: number;
+  dependencies: DependencyNode[];
+  status: PluginStatus;
+}
+
 export interface AnalysisPort {
   catalog(): Promise<PluginDescriptor[]>;
   analyze(request: AnalysisRequest): Promise<AnalysisResult>;
+  /** Kept off the realtime lane so a local parser cannot delay inline checks. */
+  analyzeDependencies(
+    request: AnalysisRequest,
+  ): Promise<DependencyAnalysisResult>;
+  /** Stops only active work; an initialized worker remains available for reuse. */
+  cancel(): void;
   dispose(): void;
 }
