@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-editor-host-commands"
+description = "Allows only the desktop editor's mediated file and clipboard commands."
+commands.allow = ["pick_file", "save_file", "read_clipboard", "write_clipboard"]

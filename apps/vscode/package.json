@@ -1,0 +1,63 @@
+{
+  "name": "quadruple-quotes-vscode",
+  "displayName": "Quadruple Quotes",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kitsuyui/quadruple-quotes.git"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "activationEvents": [
+    "onLanguage:plaintext",
+    "onLanguage:markdown"
+  ],
+  "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "quadrupleQuotes.serverPath": {
+          "type": "string",
+          "default": "quadruple-quotes-lsp"
+        },
+        "quadrupleQuotes.rules": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "quadrupleQuotes.allowedWords": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "bun test ./test/security.test.ts",
+    "check:package": "bun scripts/check-vsix.ts",
+    "package": "bunx @vscode/vsce package && bun run check:package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "@types/node": "^22.0.0",
+    "typescript": "~5.9.3",
+    "@vscode/vsce": "^3.2.0"
+  }
+}

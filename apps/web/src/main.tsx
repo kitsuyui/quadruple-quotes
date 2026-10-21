@@ -7,6 +7,7 @@ import "@fontsource/manrope/latin-700.css";
 import { App } from "./App";
 import { browserFiles } from "./browser-files";
 import { createBrowserHost } from "./browser-host";
+import { createDesktopHost, isDesktopRuntime } from "./desktop-host";
 import { RECOVERY_PREFIX } from "./recovery";
 import "./styles.css";
 
@@ -21,7 +22,7 @@ root.render(
   </div>,
 );
 
-createBrowserHost()
+(isDesktopRuntime() ? createDesktopHost() : createBrowserHost())
   .then((host) => {
     root.render(<App host={host} />);
     window.addEventListener(

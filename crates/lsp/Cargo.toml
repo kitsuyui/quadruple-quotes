@@ -1,0 +1,12 @@
+[package]
+name = "quadruple-quotes-lsp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "quadruple-quotes-lsp"
+path = "src/main.rs"
+
+[dependencies]
+quadruple-quotes-core = { path = "../core" }
+serde_json.workspace = true

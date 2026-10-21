@@ -58,16 +58,16 @@ export function FilesAndRecovery({
     };
   }, []);
 
-  function action(run: () => void) {
+  async function action(run: () => void | Promise<void>) {
     try {
-      run();
+      await run();
       setError(null);
     } catch (failure) {
       setError(String(failure instanceof Error ? failure.message : failure));
     }
   }
 
-  async function read(file: File) {
+  async function read(file: import("./ports").FileSource) {
     const token = ++readToken.current;
     setReading(true);
     setError(null);
@@ -192,6 +192,20 @@ export function FilesAndRecovery({
             }}
           />
         </label>
+        {host.files.pick && (
+          <button
+            type="button"
+            disabled={reading || disabled}
+            onClick={() =>
+              void action(async () => {
+                const file = await host.files.pick?.();
+                if (file) await read(file);
+              })
+            }
+          >
+            Choose file
+          </button>
+        )}
         {reading && <p role="status">Reading file…</p>}
         {preview && (
           <div className="import-preview">
