@@ -116,6 +116,36 @@ button.primary:hover:not(:disabled) {
   padding: 9px;
   font-size: 12px;
 }
+.dependency-table {
+  width: 100%;
+  margin-top: 14px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.dependency-table th,
+.dependency-table td {
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.dependency-selected {
+  background: #e4ebdf;
+}
+.dependency-advisories {
+  margin-top: 14px;
+  padding: 9px;
+  border: 1px solid #d5dfcd;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.dependency-advisories p {
+  color: var(--muted);
+  margin: 5px 0;
+}
+.dependency-advisories ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
 .analysis-issues small,
 .analysis-plugin small {
   color: var(--muted);

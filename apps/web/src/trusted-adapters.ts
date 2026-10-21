@@ -39,7 +39,15 @@ export const TRUSTED_ADAPTER_CATALOG: PluginDescriptor[] = [
     description: "Optional local GiNZA dependency inspection.",
     defaultEnabled: false,
     runPolicy: "manual",
-    rules: [],
+    rules: [
+      {
+        id: "ginza.long-dependency",
+        name: "Long dependency",
+        description:
+          "Optional advisory for a long dependency; it does not assert a grammar error.",
+        defaultEnabled: false,
+      },
+    ],
   },
   {
     id: "markdownlint",

@@ -121,6 +121,8 @@ export interface DependencyAnalysisResult {
   documentId: string;
   revision: number;
   dependencies: DependencyNode[];
+  /** Advisory diagnostics already filtered by the native settings policy. */
+  diagnostics: Diagnostic[];
   status: PluginStatus;
 }
 export interface JapaneseStyleAnalysisResult {

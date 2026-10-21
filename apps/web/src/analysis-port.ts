@@ -19,6 +19,27 @@ type CorePayload = {
   effectiveSettings: AnalysisRequest["settings"];
 };
 type AdapterPayload = { diagnostics: Diagnostic[]; statuses: PluginStatus[] };
+function dependencyAdvisories(
+  dependencies: DependencyAnalysisResult["dependencies"],
+): Diagnostic[] {
+  const byId = new Map(dependencies.map((node) => [node.id, node]));
+  return dependencies.flatMap((node) => {
+    const head = node.head === null ? undefined : byId.get(node.head);
+    const distance = head && Math.abs(node.range.start - head.range.start);
+    return distance === undefined || distance < 24
+      ? []
+      : [
+          {
+            pluginId: "ginza",
+            ruleId: "ginza.long-dependency",
+            message: `Dependency spans ${distance} UTF-16 units; review the connected tokens in context.`,
+            severity: "info" as const,
+            invalidationScope: "sentence" as const,
+            range: node.range,
+          },
+        ];
+  });
+}
 type WorkerResponse =
   | { id: number; ok: true; catalog: PluginDescriptor[] }
   | { id: number; ok: true; core: CorePayload }
@@ -241,19 +262,65 @@ export class BrowserAnalysisPort implements AnalysisPort {
       return finalResponse.result;
     });
   }
-  analyzeDependencies(
+  async analyzeDependencies(
     request: AnalysisRequest,
   ): Promise<DependencyAnalysisResult> {
-    return this.dependencies
-      .request<WorkerResponse>(
-        { kind: "dependencies", lane: "ginza", request },
-        this.timeouts.dependency ?? DEPENDENCY_TIMEOUT_MS,
-      )
-      .then((response) => {
-        if (!("dependencies" in response))
-          throw new Error("Missing dependency analysis result.");
-        return response.dependencies;
+    const manualGeneration = ++this.manualGeneration;
+    this.manualSnapshot = this.snapshot(request);
+    this.manualActive = true;
+    try {
+      const raw = await this.dependencies
+        .request<WorkerResponse>(
+          { kind: "dependencies", lane: "ginza", request },
+          this.timeouts.dependency ?? DEPENDENCY_TIMEOUT_MS,
+        )
+        .then((response) => {
+          if (!("dependencies" in response))
+            throw new Error("Missing dependency analysis result.");
+          return response.dependencies;
+        });
+      if (raw.status.status !== "ok") {
+        this.assertManualCurrent(manualGeneration);
+        return { ...raw, diagnostics: [] };
+      }
+      const result = await this.enqueueCore(async () => {
+        this.assertManualCurrent(manualGeneration);
+        const coreResponse = await this.core.request<WorkerResponse>(
+          {
+            kind: "core",
+            lane: "core",
+            request: { ...request, manual: false },
+          },
+          this.timeouts.realtime ?? REALTIME_TIMEOUT_MS,
+        );
+        if (!("core" in coreResponse))
+          throw new Error("Missing dependency policy snapshot.");
+        const adapters: AdapterPayload = {
+          diagnostics: dependencyAdvisories(raw.dependencies),
+          statuses: [],
+        };
+        const policy = await this.core.request<WorkerResponse>(
+          { kind: "policy", lane: "core", core: coreResponse.core, adapters },
+          this.timeouts.realtime ?? REALTIME_TIMEOUT_MS,
+        );
+        if (!("result" in policy))
+          throw new Error("Missing dependency policy result.");
+        this.assertResultIdentity(policy.result, request);
+        return {
+          ...raw,
+          diagnostics: policy.result.diagnostics.filter(
+            (item) => item.ruleId === "ginza.long-dependency",
+          ),
+        };
       });
+      this.assertManualCurrent(manualGeneration);
+      return result;
+    } finally {
+      if (manualGeneration === this.manualGeneration) {
+        this.manualSnapshot = null;
+        this.manualActive = false;
+      }
+    }
   }
   async analyzeJapaneseStyle(
     request: AnalysisRequest,
@@ -261,49 +328,53 @@ export class BrowserAnalysisPort implements AnalysisPort {
     const manualGeneration = ++this.manualGeneration;
     this.manualSnapshot = this.snapshot(request);
     this.manualActive = true;
-    const raw = await this.japaneseStyle.request<WorkerResponse>(
-      { kind: "japanese-style", request },
-      this.timeouts.dependency ?? DEPENDENCY_TIMEOUT_MS,
-    );
-    if (!("japaneseStyle" in raw))
-      throw new Error("Missing Japanese style result.");
-    if (
-      raw.japaneseStyle.documentId !== request.documentId ||
-      raw.japaneseStyle.revision !== request.revision
-    )
-      throw new Error("Japanese style result is stale.");
-    this.assertManualCurrent(manualGeneration);
-    const adapters: AdapterPayload = {
-      diagnostics: raw.japaneseStyle.diagnostics,
-      statuses: [raw.japaneseStyle.status],
-    };
-    return this.enqueueCore(async () => {
+    try {
+      const raw = await this.japaneseStyle.request<WorkerResponse>(
+        { kind: "japanese-style", request },
+        this.timeouts.dependency ?? DEPENDENCY_TIMEOUT_MS,
+      );
+      if (!("japaneseStyle" in raw))
+        throw new Error("Missing Japanese style result.");
+      if (
+        raw.japaneseStyle.documentId !== request.documentId ||
+        raw.japaneseStyle.revision !== request.revision
+      )
+        throw new Error("Japanese style result is stale.");
       this.assertManualCurrent(manualGeneration);
-      const coreResponse = await this.core.request<WorkerResponse>(
-        { kind: "core", request: { ...request, manual: false } },
-        this.timeouts.realtime ?? REALTIME_TIMEOUT_MS,
-      );
-      if (!("core" in coreResponse))
-        throw new Error("Missing core analysis result.");
-      const finalResponse = await this.core.request<WorkerResponse>(
-        { kind: "policy", core: coreResponse.core, adapters },
-        this.timeouts.realtime ?? REALTIME_TIMEOUT_MS,
-      );
-      if (!("result" in finalResponse))
-        throw new Error("Missing Japanese style policy result.");
-      const result = {
-        documentId: request.documentId,
-        revision: request.revision,
-        diagnostics: finalResponse.result.diagnostics.filter(
-          (item) => item.pluginId === raw.japaneseStyle.status.pluginId,
-        ),
-        status: raw.japaneseStyle.status,
+      const adapters: AdapterPayload = {
+        diagnostics: raw.japaneseStyle.diagnostics,
+        statuses: [raw.japaneseStyle.status],
       };
-      if (manualGeneration === this.manualGeneration)
+      return this.enqueueCore(async () => {
+        this.assertManualCurrent(manualGeneration);
+        const coreResponse = await this.core.request<WorkerResponse>(
+          { kind: "core", request: { ...request, manual: false } },
+          this.timeouts.realtime ?? REALTIME_TIMEOUT_MS,
+        );
+        if (!("core" in coreResponse))
+          throw new Error("Missing core analysis result.");
+        const finalResponse = await this.core.request<WorkerResponse>(
+          { kind: "policy", core: coreResponse.core, adapters },
+          this.timeouts.realtime ?? REALTIME_TIMEOUT_MS,
+        );
+        if (!("result" in finalResponse))
+          throw new Error("Missing Japanese style policy result.");
+        const result = {
+          documentId: request.documentId,
+          revision: request.revision,
+          diagnostics: finalResponse.result.diagnostics.filter(
+            (item) => item.pluginId === raw.japaneseStyle.status.pluginId,
+          ),
+          status: raw.japaneseStyle.status,
+        };
+        return result;
+      });
+    } finally {
+      if (manualGeneration === this.manualGeneration) {
         this.manualSnapshot = null;
-      if (manualGeneration === this.manualGeneration) this.manualActive = false;
-      return result;
-    });
+        this.manualActive = false;
+      }
+    }
   }
   cancel() {
     this.generation += 1;
@@ -341,6 +412,7 @@ export class BrowserAnalysisPort implements AnalysisPort {
     this.manualGeneration += 1;
     this.manualSnapshot = null;
     this.manualActive = false;
+    this.dependencies.cancel("Dependency analysis was superseded.");
     this.japaneseStyle.cancel("Japanese style analysis was superseded.");
   }
   private enqueueCore<T>(work: () => Promise<T>): Promise<T> {

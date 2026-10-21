@@ -1,0 +1,8 @@
+{"id":"short-clean","text":"編集者が原稿を確認した。","expectCue":false,"label":"short structural counterexample"}
+{"id":"modifier-clean","text":"編集者が丁寧に確認した原稿を公開した。","expectCue":false,"label":"ordinary modifier-chain counterexample"}
+{"id":"long-subject","text":"この提案は、実装時の影響を十分に確認したうえで関係者と慎重に合意する必要がある。","expectCue":true,"label":"deliberately long subject-to-predicate review cue"}
+{"id":"long-subject-2","text":"私たちは、来週予定されている複数部門合同の長時間にわたる検討会で詳細を説明する。","expectCue":true,"label":"deliberately long subject-to-predicate review cue"}
+{"id":"multisentence","text":"担当者が確認した。次に編集者が公開する。","expectCue":false,"label":"multi-sentence counterexample"}
+{"id":"emoji-crlf","text":"😀 emoji と CRLF\r\n二文目を確認する。","expectCue":false,"label":"UTF-16 and CRLF counterexample"}
+{"id":"quoted-clean","text":"引用符「とても長い修飾句を含む説明」を読者に示した。","expectCue":false,"label":"quotation counterexample"}
+{"id":"long-modifier","text":"この変更は、既存利用者への影響を小さくするための十分な移行期間を設けてから適用する。","expectCue":true,"label":"deliberately long subject-to-predicate review cue"}

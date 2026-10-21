@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { request as nodeRequest } from "node:http";
 
 let port: number;
 let server: Bun.Subprocess | undefined;
@@ -12,6 +13,31 @@ const request = (
     method: "POST",
     headers: { "content-type": "application/json", ...(init.headers ?? {}) },
     body: JSON.stringify(body),
+  });
+const fragmentedRequest = (body: Buffer, split: number) =>
+  new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const next = nodeRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/api/dependencies",
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        );
+      },
+    );
+    next.on("error", reject);
+    next.write(body.subarray(0, split));
+    setTimeout(() => next.end(body.subarray(split)), 10);
   });
 
 beforeAll(async () => {
@@ -30,6 +56,8 @@ beforeAll(async () => {
       ANALYSIS_HOST_TIMEOUT_MS: "100",
       ANALYSIS_HOST_PYTHON: "python3",
       ANALYSIS_HOST_SCRIPT: "tests/fixtures/fake-dependency-parser.py",
+      ANALYSIS_HOST_JAPANESE_STYLE_RUNNER:
+        "tests/fixtures/fake-japanese-style-runner.ts",
     },
   });
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -108,8 +136,36 @@ test("returns parser capability and schema failures as errors, then reuses the r
   expect((await missing.json()).error).toContain("GiNZA model missing");
   expect((await request({ text: "parse-failure" })).status).toBe(502);
   expect((await request({ text: "invalid-dependencies" })).status).toBe(502);
+  expect((await request({ text: "duplicate-graph" })).status).toBe(502);
+  expect((await request({ text: "emoji-range" })).status).toBe(502);
+  expect((await request({ text: "😀x" })).status).toBe(502);
+  expect((await request({ text: "cycle-graph" })).status).toBe(502);
   expect((await request({ text: "wrong-id" })).status).toBe(502);
+  expect((await request({ text: "primitive-node" })).status).toBe(502);
   expect((await request({ text: "after-parser-error" })).status).toBe(200);
+});
+test("preserves UTF-8 across fragmented HTTP, parser stdout, and parser restart", async () => {
+  const body = Buffer.from(JSON.stringify({ text: "東京😀" }));
+  const split = body.indexOf(Buffer.from("東")) + 1;
+  const http = await fragmentedRequest(body, split);
+  expect(http.status).toBe(200);
+  expect(JSON.parse(http.body).dependencies).toEqual([]);
+
+  expect((await request({ text: "partial-then-exit" })).status).toBe(502);
+  await Bun.sleep(25);
+  const parsed = await request({ text: "unicode-split" });
+  expect(parsed.status).toBe(200);
+  expect((await parsed.json()).dependencies[0].relation).toBe("分割😀");
+});
+test("accepts a complete 5,000-node chain without quadratic ancestor walks", async () => {
+  const started = performance.now();
+  const response = await request({ text: "x".repeat(5000) });
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as { dependencies: unknown[] };
+  expect(payload.dependencies).toHaveLength(5000);
+  // This is intentionally generous for a loaded CI worker but catches a
+  // per-node ancestor traversal regression at the advertised graph limit.
+  expect(performance.now() - started).toBeLessThan(1_500);
 });
 test("discards timed out and aborted request results before the next job", async () => {
   expect((await request({ text: "slow" })).status).toBe(504);
@@ -145,7 +201,11 @@ test("bounds and validates local Japanese style requests independently", async (
     "/api/japanese-style",
   );
   expect(valid.status).toBe(200);
-  expect((await valid.json()).diagnostics).toHaveLength(1);
+  const validPayload = (await valid.json()) as {
+    diagnostics: { message: string }[];
+  };
+  expect(validPayload.diagnostics).toHaveLength(1);
+  expect(validPayload.diagnostics[0]?.message).toBe("分割😀を保持");
   expect(
     (
       await request(
