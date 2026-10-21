@@ -14,9 +14,9 @@ React editor → EditorHost ports → browser adapter → WASM transport → Rus
 | `crates/wasm` | Thin JSON transport to the same core | Implemented |
 | `apps/web` | Editor, sidebar, draft lifecycle, browser storage, clipboard, and analysis worker | Implemented |
 | Proofreading plugins | Rust analysis, bundled Markdown/textlint rules, and opt-in local dependency analysis | Implemented |
-| LSP | Native core adapter for document synchronization and diagnostics | WIP; no implementation |
-| VSCode extension | LSP client and editor integration | WIP; no implementation |
-| Desktop | Reuse the React editor with a Tauri host adapter | WIP; no implementation |
+| LSP | Native core adapter for document synchronization, core text-health and typos diagnostics, and explicit typo quick fixes | Implemented; JavaScript adapters and hover are unavailable |
+| VSCode extension | LSP client and editor integration | Implemented for the supported LSP surface |
+| Desktop | Reuse the React editor with a Tauri host adapter | Implemented baseline; user-mediated file and clipboard commands only |
 
 ## Dependency direction
 
@@ -24,7 +24,7 @@ The core accepts document IDs and timestamps from its host, holds documents in m
 
 The WASM crate translates errors and JSON across the browser boundary. It delegates mutations and snapshot validation to the core. No text management behavior is implemented a second time in TypeScript.
 
-The React editor depends on `EditorHost`, not the browser adapter. `TextRepository`, `ClipboardPort`, `FilePort`, `RecoveryPort`, ID creation, and the clock are replaceable host capabilities. A future Tauri adapter can use native commands for persistence, files and clipboard while reusing the editor. No Tauri-specific code is required yet.
+The React editor depends on `EditorHost`, not the browser adapter. `TextRepository`, `ClipboardPort`, `FilePort`, `RecoveryPort`, ID creation, and the clock are replaceable host capabilities. The Tauri adapter reuses browser storage and exposes only user-mediated native file selection, save dialogs, and clipboard commands. It has no arbitrary filesystem, shell, process, remote-navigation, or native-analysis capability.
 
 ## Persistence and drafts
 
@@ -62,7 +62,7 @@ The shared settings contract separates rule policy from exceptions. Named preset
 
 Browser settings use envelope version 2 at the stable `quadruple-quotes.proofreading-settings.v1` key. Version 1 is read without writing and upgraded only by an explicit settings change. Host validation checks bounded configuration, rejects unknown fields/versions rather than dropping them, and compares the inspected raw value before every write. This is a best-effort stale-tab check, not transactional multi-writer storage. A storage event invalidates diagnostics immediately; settings-only reload preserves draft/history. Saved preset metadata is not sent to analysis. See [settings and exceptions](proofreading-roadmap.md#settings-presets-and-exceptions) for scopes and limits.
 
-LSP synchronization can use the native core and its own document-version mapping; protocol capabilities stay in that adapter. A VSCode client depends on the LSP surface rather than Rust internals. Desktop storage stays behind host ports.
+The LSP owns document-version mapping and translates core text-health and typos diagnostics, including explicit typo quick fixes. It has no hover provider and does not execute JavaScript rules, markdownlint, textlint, GiNZA, plugins, or cloud services. The VSCode client depends only on that LSP surface. Desktop storage stays behind host ports; its analysis uses the browser-safe WASM lanes and marks separately served Japanese helpers unavailable.
 
 ## Reference patterns
 

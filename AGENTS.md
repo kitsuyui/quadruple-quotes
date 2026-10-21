@@ -4,7 +4,7 @@
 
 - この repository は Rust core と React Web UI を持つテキスト管理ツールです。
 - 現段階の実装対象はテキスト管理とローカル校正です。校正にはルール切替、インライン指摘、明示的な候補適用、本文の Undo／Redo、指摘間の移動を含みます。
-- LSP、VSCode 拡張、Tauri は WIP です。依頼なしに scaffold や依存を追加しません。
+- LSP、VSCode 拡張、Tauri host は実装済みの最小表面を持ちます。依頼なしに追加の protocol capability、native helper、依存を追加しません。
 - 公開されるコードコメント、README、設計文書、commit message、PR は英語で記述します。
 - 他 repository の内部運用、private path、内部 Issue / PR を公開成果物へ含めません。
 
@@ -21,7 +21,7 @@
 
 ## 検証
 
-- `just check` で Rust format / Clippy / tests、Biome、TypeScript、WASM + Web build、Playwright を実行します。
+- `just check` で Rust format / Clippy / tests、Biome、TypeScript、WASM + Web build、Playwright を実行します。LSP、VSCode 拡張、Tauri host を変更した場合は、それぞれの build / test も実行します。
 - 先に `bunx playwright install chromium` を実行してテスト用 browser を用意します。
 - UI を変更したら desktop / mobile の表示と keyboard 操作を確認します。
 - generated WASM、build output、runtime cache、テスト artifact は commit しません。

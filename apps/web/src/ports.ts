@@ -42,7 +42,8 @@ export interface FileSource {
 }
 export interface FilePort {
   read(file: FileSource, maxBytes: number): Promise<string>;
-  download(name: string, text: string, mime: string): void;
+  download(name: string, text: string, mime: string): void | Promise<void>;
+  pick?(): Promise<FileSource | null>;
 }
 export interface RecoveryRecord {
   schemaVersion: 1;

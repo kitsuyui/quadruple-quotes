@@ -133,6 +133,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quadruple-quotes-lsp"
+version = "0.1.0"
+dependencies = [
+ "quadruple-quotes-core",
+ "serde_json",
+]
+
+[[package]]
 name = "quadruple-quotes-wasm"
 version = "0.1.0"
 dependencies = [
