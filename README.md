@@ -61,3 +61,12 @@ Under **Proofreading → Presets**, choose **Basic**, **Japanese prose**, or **M
 Settings save separately from texts and never save or edit a draft. Legacy settings upgrade only after an explicit change. Corrupt or unsupported settings remain untouched; another tab's update disables stale analysis until **Reload proofreading settings** reads only the settings, preserving your draft and body history. **Reset proofreading settings** explicitly clears settings and saved presets without clearing texts.
 
 The panel labels analysis counts as grapheme clusters and the editor footer's code-point count as Unicode scalars. Realtime checks skip texts above 100,000 UTF-16 units and cap diagnostics at 200. Optional Japanese dependency analysis contacts a locally configured parser only after an explicit manual request while the panel is open; closing it stops further dependency runs. The Rust LSP and VS Code client support only core text-health and typos diagnostics and explicit typo quick fixes; hover is unavailable. They do not run JavaScript rules, markdownlint, textlint, GiNZA, arbitrary plugins, or cloud services. The baseline Tauri desktop host reuses the browser/WASM analysis lanes and offers only user-mediated file dialogs and clipboard commands; separately served Japanese helpers are unavailable there. See `crates/lsp`, `apps/vscode`, and `apps/desktop` for local setup and [the architecture](docs/architecture.md) for the integration boundaries.
+
+## Source releases
+
+A maintainer can run the **Source release** GitHub Actions workflow on `main`
+with a new stable tag such as `v0.1.0`. The workflow requires the existing
+`Check` workflow to have succeeded on that exact commit and creates a GitHub
+source release. If release creation fails after the tag is created, inspect
+the existing tag target SHA in the GitHub UI or API, then create the release
+for that tag without moving it. Do not upload locally built artifacts.
