@@ -35,3 +35,6 @@ jobs:
           bun run build
           bun test
           bun run package
+
+      - name: Test source release checks
+        run: bash scripts/release/test-source-release.sh
